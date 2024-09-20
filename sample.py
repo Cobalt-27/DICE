@@ -139,6 +139,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--seed", type=int, default=2024)
     parser.add_argument("--ckpt", type=str, default=None, )
-    parser.add_argument("--rf", type=bool, default=True) 
+    parser.add_argument("--rf", action='store_true')
     args = parser.parse_args()
     main(args) 
