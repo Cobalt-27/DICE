@@ -1,8 +1,8 @@
 #!/bin/bash
 
 model="DiT-S/2"
-ckpt_path="/workspace/model/dit_moe_s_8E2A.pt"
-vae_path="/workspace/model/vae"
+ckpt_path="/mnt/dit_moe_s_8E2A.pt"
+vae_path="/mnt/vae"
 num_experts="8"
 num_sample_steps="1000"
 image_size="256"
