@@ -56,8 +56,7 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     """
     from .ep_fwd import global_dispatch
     assert cache_key is not None
-    # if not cache_key in diep_cache_dispatch:
-    if True:
+    if not cache_key in diep_cache_dispatch:
         # to be warm up
         buf, _ = global_dispatch(
             grouped_dup_inp=grouped_dup_inp,
@@ -89,8 +88,7 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
     """
     from .ep_fwd import global_combine
     assert cache_key is not None
-    # if not cache_key in diep_cache_combine:
-    if True:
+    if not cache_key in diep_cache_combine:
         # to be warm up
         buf, _ = global_combine(
             grouped_dup_outp=grouped_dup_outp,
