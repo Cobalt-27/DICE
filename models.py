@@ -9,6 +9,7 @@
 # MAE: https://github.com/facebookresearch/mae/blob/main/models_mae.py
 # --------------------------------------------------------
 
+import uuid
 import torch
 import torch.nn as nn
 import numpy as np
@@ -32,6 +33,11 @@ except Exception as e:
 
 # selected_ids_list = []
 
+def set_ep_async(val):
+    global ep_async_op
+    ep_async_op = val
+
+ep_async_op = False
 
 
 def modulate(x, shift, scale):
@@ -252,7 +258,9 @@ class SparseMoeBlock(nn.Module):
         if self.n_shared_experts is not None:
             intermediate_size =  embed_dim * self.n_shared_experts
             self.shared_experts = MoeMLP(hidden_size = embed_dim, intermediate_size = intermediate_size, pretraining_tp=pretraining_tp)
-    
+        self.cache_key = str(uuid.uuid4())
+        
+        
     def forward(self, hidden_states):
         identity = hidden_states
         orig_shape = hidden_states.shape
@@ -272,7 +280,17 @@ class SparseMoeBlock(nn.Module):
             y =  y.view(*orig_shape)
             y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
-            y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
+            # y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
+            from expertpara.ep_fwd import moe_infer_ep
+            y = moe_infer_ep(
+                inp=hidden_states,
+                experts=self.experts,
+                flat_expert_indices=flat_topk_idx,
+                flat_expert_weights=topk_weight.view(-1, 1),
+                num_experts_per_tok=self.num_experts_per_tok,
+                async_op=ep_async_op,
+                cache_key=self.cache_key,
+            ).view(*orig_shape)
         if self.n_shared_experts is not None:
             y = y + self.shared_experts(identity)
         return y
@@ -280,6 +298,7 @@ class SparseMoeBlock(nn.Module):
 
     @torch.no_grad()
     def moe_infer(self, x, flat_expert_indices, flat_expert_weights):
+        raise RuntimeError("Should use EP")
         expert_cache = torch.zeros_like(x) 
         idxs = flat_expert_indices.argsort()
         tokens_per_expert = flat_expert_indices.bincount().cpu().numpy().cumsum(0)

@@ -3,12 +3,12 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
-
+from .diep import global_combine_async,global_dispatch_async
 # ref: https://github.com/laekov/fastmoe
 
 @torch.no_grad()
 # parallel version of SparseMoeBlock.moe_infer()
-def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices, flat_expert_weights,num_total_experts, num_experts_per_tok):
+def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices, flat_expert_weights, num_experts_per_tok, async_op, cache_key=None):
     """
     Perform inference using a mixture of experts (MoE) model in an expert parallel (EP) setting.
     Args:
@@ -31,6 +31,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     """
     world_size = dist.get_world_size()
     global_rank = dist.get_rank()
+    num_total_experts = len(experts)
     num_local_experts = num_total_experts // world_size
     assert num_total_experts % world_size == 0, "Number of experts must be divisible by world size"
     
@@ -61,8 +62,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     
     # NOTE: Global Dispatch
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#combined tokens * num_experts_per_tok, h]
-    
-    mlp_inp = _global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
+    if not async_op:
+        mlp_inp, _ = global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
+    else:
+        mlp_inp, token_counts_local, token_counts_global = global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, cache_key=cache_key)
     
     # MLP
     mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
@@ -70,7 +73,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     # NOTE: Global Combine
     # mapping: [#combined tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
     
-    grouped_dup_outp = _global_combine(mlp_outp, token_counts_local, token_counts_global)
+    if not async_op:
+        grouped_dup_outp, _ = global_combine(mlp_outp, token_counts_local, token_counts_global)
+    else:
+        grouped_dup_outp = global_combine_async(mlp_outp, token_counts_local, token_counts_global, cache_key=cache_key)
     
     # Local combine
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
@@ -129,7 +135,7 @@ def exchange_token_counts(token_counts_local):
     return token_counts_global
 
 @torch.no_grad()
-def _global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global):
+def global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global, async_op=False):
     """
     dispatch the grouped input tensor to the experts on all workers.
     Args:
@@ -157,21 +163,23 @@ def _global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global):
     
     send_start = 0
     recv_start = 0
+    handle_list = []
     for i in range(num_local_experts):
-        dist.all_to_all_single(
+        handle=dist.all_to_all_single(
             output=buf[recv_start:recv_start+recv_size[i]],
             input=grouped_dup_inp[send_start:send_start+send_size[i]],
             output_split_sizes=token_counts_global[:,i].flatten().tolist(),
             input_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
-            async_op=False,
+            async_op=async_op,
         )
+        handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
     assert send_start == grouped_dup_inp.size(0) and recv_start == buf.size(0)
-    return buf
+    return buf, handle_list
 
 @torch.no_grad()
-def _global_combine(grouped_dup_outp, token_counts_local, token_counts_global):
+def global_combine(grouped_dup_outp, token_counts_local, token_counts_global, async_op=False):
     """
     combine the grouped output tensor from all workers.
     Args:
@@ -183,6 +191,7 @@ def _global_combine(grouped_dup_outp, token_counts_local, token_counts_global):
             of tokens routed to CURRENT worker's local experts from ALL workers.
     Returns:
         Tensor: all2all output
+        list: list of handles for async all2all
     """
     world_size = dist.get_world_size()
     global_rank = dist.get_rank()
@@ -199,18 +208,20 @@ def _global_combine(grouped_dup_outp, token_counts_local, token_counts_global):
     
     send_start = 0
     recv_start = 0
+    handle_list = []
     for i in range(num_local_experts):
-        dist.all_to_all_single(
+        handle=dist.all_to_all_single(
             output=buf[recv_start:recv_start+recv_size[i]],
             input=grouped_dup_outp[send_start:send_start+send_size[i]],
             output_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
             input_split_sizes=token_counts_global[:,i].flatten().tolist(),
-            async_op=False,
+            async_op=async_op,
         )
+        handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
     assert send_start == grouped_dup_outp.size(0) and recv_start == buf.size(0)
-    return buf
+    return buf, handle_list
 
 @torch.no_grad()
 def _local_dispatch(inp, pos):

@@ -51,17 +51,18 @@ def _find_port():
     return port
 
 N_TOKENS = 128
+N_ITER = 4
 HIDDEN_SIZE = 36
 WORLD_SIZE = 4
 NUM_TOTAL_EXPERTS = 8
 NUM_EXPERTS_PER_TOK = 2
 
 
-def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, hidden_size, port, seed):
+def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op):
     try:
         # Initialize the process group
         if rank != 0:
-            time.sleep(1)  # Wait for the rank 0 to initialize the process group
+            time.sleep(.5)  # Wait for the rank 0 to initialize the process group
         dist.init_process_group(backend='gloo', init_method=f'tcp://localhost:{port}/',
                                 world_size=world_size, rank=rank)
         # Set the device to CPU
@@ -76,35 +77,56 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
         
         torch.manual_seed(seed + rank) # each proc shall use a different seed for input
         
-        inp = torch.randn(n_tokens, hidden_size).to(device)
+        
         flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
         flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)
         
         # experts = [nn.Identity() for _ in range(num_total_experts)]
         
         # Run the _infer_grouped function
-        expert_out = moe_infer_ep(
-            inp=inp,
-            experts=experts,
-            flat_expert_indices=flat_expert_indices,
-            flat_expert_weights=flat_expert_weights,
-            num_total_experts=num_total_experts,
-            num_experts_per_tok=num_experts_per_tok,
-        )
-        
-        single_node_out = moe_infer_single_node(
-            experts=experts,
-            num_experts_per_tok=num_experts_per_tok,
-            x=inp,
-            flat_expert_indices=flat_expert_indices,
-            flat_expert_weights=flat_expert_weights,
-        )
-        
-        # Verify the output
-        if torch.allclose(expert_out, single_node_out, atol=1e-6):
+        test_passed = True
+        prev_out = []
+        for i in range(n_iter):
+            inp = torch.randn(n_tokens, hidden_size).to(device)
+            expert_out = moe_infer_ep(
+                inp=inp,
+                experts=experts,
+                flat_expert_indices=flat_expert_indices,
+                flat_expert_weights=flat_expert_weights,
+                num_experts_per_tok=num_experts_per_tok,
+                async_op=async_op,
+                cache_key="test_cache_key",
+            )
+            
+            single_node_out = moe_infer_single_node(
+                experts=experts,
+                num_experts_per_tok=num_experts_per_tok,
+                x=inp,
+                flat_expert_indices=flat_expert_indices,
+                flat_expert_weights=flat_expert_weights,
+            )
+            
+            """
+            If async all2all, the output shall be the same as the previous two steps.
+            
+            """
+            if async_op:
+                if len(prev_out) == 0:
+                    ans = single_node_out
+                elif len(prev_out) == 1:
+                    ans = prev_out[0]
+                else:
+                    ans = prev_out[-2]
+            else:
+                ans = single_node_out
+            prev_out.append(single_node_out)
+            # Verify the output
+            if not torch.allclose(expert_out, ans, atol=1e-6):
+                test_passed = False
+                print(f"Rank {rank}: Test failed at iter {i}, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}")
+            
+        if test_passed:
             print(f"Rank {rank}: Test passed.")
-        else:
-            print(f"Rank {rank}: Test failed, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}")
     finally:
         # Clean up
         dist.destroy_process_group()
@@ -113,9 +135,17 @@ def test_infer(repeats=3):
     seed = 42
     for i in range(repeats):
         print(f"\nRunning test iteration {i+1} with seed {seed + i}...")
+        print("Running sync test...")
         mp.spawn(
             run_test,
-            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, HIDDEN_SIZE, _find_port(), seed + i),
+            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, _find_port(), seed + i, False),
+            nprocs=WORLD_SIZE,
+            join=True
+        )
+        print(f"Running async test...")
+        mp.spawn(
+            run_test,
+            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, _find_port(), seed + i, True),
             nprocs=WORLD_SIZE,
             join=True
         )
