@@ -7,8 +7,8 @@ num_experts="8"
 num_sample_steps="500"
 image_size="256"
 cfg_scale="1.5"
-fid_samples="32"
-per_proc_batch_size="1"
+fid_samples="256"
+per_proc_batch_size="32"
 
 CUDA_VISIBLE_DEVICES=0,1
 
