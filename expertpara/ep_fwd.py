@@ -60,14 +60,15 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     # mapping: [#input tokens, h] -> [#input tokens * num_experts_per_tok, h]
     grouped_dup_inp = _local_dispatch(inp=inp, pos=grouped_idx) 
     
-    
     """
     NOTE
-    Have to update mapping like grouped_idx_dup, since async all2all receives tokens in a different order
+    Have to update meta data like grouped_idx_dup
     
-    need update:
-    - grouped_idx_dup
+    meta data to be stored in cache:
+    - token counts, local & global
+    - grouped_idx_dup, since async all2all receives tokens in a different order
     - grouped_idx
+    - flat_expert_weights, using WRONG WEIGHTS will lead to CORRUPTED RESULTS
     
     """
     # NOTE: Global Dispatch
@@ -75,7 +76,18 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     if not async_op:
         mlp_inp, _ = global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
     else:
-        mlp_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights = global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, cache_key=cache_key)
+        (
+            mlp_inp, 
+            token_counts_local, 
+            token_counts_global, 
+            grouped_idx_dup, 
+            flat_expert_weights
+        ) = global_dispatch_async(grouped_dup_inp=grouped_dup_inp,
+                                      token_counts_local=token_counts_local,
+                                      token_counts_global=token_counts_global,
+                                      grouped_idx_dup=grouped_idx_dup,
+                                      flat_expert_weights=flat_expert_weights,
+                                      cache_key=cache_key)
         grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # MLP
     mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
@@ -86,7 +98,16 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     if not async_op:
         grouped_dup_outp, _ = global_combine(mlp_outp, token_counts_local, token_counts_global)
     else:
-        grouped_dup_outp, grouped_idx_dup, flat_expert_weights = global_combine_async(mlp_outp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, cache_key=cache_key)
+        (
+            grouped_dup_outp, 
+            grouped_idx_dup, 
+            flat_expert_weights
+        ) = global_combine_async(grouped_dup_outp=mlp_outp,
+                                    token_counts_local=token_counts_local,
+                                    token_counts_global=token_counts_global,
+                                    grouped_idx_dup=grouped_idx_dup,
+                                    flat_expert_weights=flat_expert_weights,
+                                    cache_key=cache_key)
         grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # Local combine
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
