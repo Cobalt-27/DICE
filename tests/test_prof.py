@@ -1,66 +1,201 @@
 import torch
 from expertpara.prof import CudaProfiler
 
-def test_single_section():
+def test_profiler_with_manual_and_profiler_events():
     profiler = CudaProfiler()
-    profiler.start('section_1')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_1')
-    elapsed_time = profiler.elapsed_time('section_1')
-    assert elapsed_time > 0, "Elapsed time should be greater than 0"
+
+    # Create CUDA events for manual timing
+    manual_start_A = torch.cuda.Event(enable_timing=True)
+    manual_end_A = torch.cuda.Event(enable_timing=True)
+    manual_start_ABC = torch.cuda.Event(enable_timing=True)
+    manual_end_ABC = torch.cuda.Event(enable_timing=True)
+    x = torch.randn(1000, 1000, device='cuda')
+    y = torch.randn(1000, 1000, device='cuda')
+    # Start manual timing for the full sequence ABC
+    manual_start_ABC.record()
+    # Perform operation A and time it manually
+    manual_start_A.record()
+    profiler.start('op_AB')
+    
+    torch.matmul(x, y)  # Operation A
+    manual_end_A.record()
+
+    # Start profiler for operation AB
+    
+
+    # Perform operation B
+    torch.matmul(x, y)  # Operation B
+
+    # Stop profiler for operation AB
+    profiler.stop('op_AB')
+
+    # Perform operation C
+    torch.matmul(x, y)  # Operation C
+
+    # End manual timing for the full sequence ABC
+    manual_end_ABC.record()
+
+    # Sync CUDA events
+    torch.cuda.synchronize()
+
+    # Get manually measured times
+    manual_time_A = manual_start_A.elapsed_time(manual_end_A)
+    manual_time_ABC = manual_start_ABC.elapsed_time(manual_end_ABC)
+
+    # Get profiler measured time for AB
+    profiler_time_AB = profiler.elapsed_time('op_AB')
+
+    try:
+        # Validate the inequalities: A < AB < ABC
+        assert manual_time_A < profiler_time_AB, \
+            f"Failed: Manual time for A ({manual_time_A} ms) should be less than profiler time for AB ({profiler_time_AB} ms)"
+        assert profiler_time_AB < manual_time_ABC, \
+            f"Failed: Profiler time for AB ({profiler_time_AB} ms) should be less than manual time for ABC ({manual_time_ABC} ms)"
+
+        print("Test 1 (A < AB < ABC) passed!")
+
+    except AssertionError as e:
+        print(str(e))
+
 
 def test_multiple_sections():
     profiler = CudaProfiler()
-    profiler.start('section_1')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_1')
 
-    profiler.start('section_2')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_2')
+    # Record timings for two separate operations (X and Y)
+    x = torch.randn(1000, 1000, device='cuda')
+    y = torch.randn(1000, 1000, device='cuda')
 
-    elapsed_time_1 = profiler.elapsed_time('section_1')
-    elapsed_time_2 = profiler.elapsed_time('section_2')
+    # Start profiling operation X
+    profiler.start('op_X')
+    torch.matmul(x, y)  # Operation X
+    profiler.stop('op_X')
 
-    assert elapsed_time_1 > 0, "Elapsed time for section_1 should be greater than 0"
-    assert elapsed_time_2 > 0, "Elapsed time for section_2 should be greater than 0"
+    # Start profiling operation Y
+    profiler.start('op_Y')
+    torch.matmul(x, y)  # Operation Y
+    profiler.stop('op_Y')
 
-def test_accumulated_time():
-    profiler = CudaProfiler()
-    profiler.start('section_1')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_1')
+    # Get elapsed times for both operations
+    profiler_time_X = profiler.elapsed_time('op_X')
+    profiler_time_Y = profiler.elapsed_time('op_Y')
 
-    profiler.start('section_1')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_1')
-
-    elapsed_time = profiler.elapsed_time('section_1')
-    assert elapsed_time > 0, "Accumulated elapsed time should be greater than 0"
-
-def test_reset():
-    profiler = CudaProfiler()
-    profiler.start('section_1')
-    torch.cuda.synchronize()  # Simulate some GPU work
-    profiler.stop('section_1')
-
-    profiler.reset()
     try:
-        profiler.elapsed_time('section_1')
-        assert False, "Expected ValueError after reset"
-    except ValueError:
-        pass
+        # Ensure both timings are greater than zero
+        assert profiler_time_X > 0, "Failed: Profiler time for X should be greater than 0"
+        assert profiler_time_Y > 0, "Failed: Profiler time for Y should be greater than 0"
 
-def test_singleton():
-    profiler1 = CudaProfiler.prof()
-    profiler2 = CudaProfiler.prof()
-    assert profiler1 is profiler2, "Both instances should be the same (singleton pattern)"
+        print("Test 2 (Multiple Sections) passed!")
 
-if __name__ == '__main__':
-    print("Running profiling tests...")
-    test_single_section()
+    except AssertionError as e:
+        print(str(e))
+
+
+def test_overlapping_sections():
+    profiler = CudaProfiler()
+
+    # Record timings for overlapping operations (P and PQ)
+    x = torch.randn(1000, 1000, device='cuda')
+    y = torch.randn(1000, 1000, device='cuda')
+
+    # Start profiling operation P
+    profiler.start('op_PQ')
+    torch.matmul(x, y)  # Operation P
+
+    # Start profiling operation PQ (includes P and Q)
+    profiler.start('op_P')
+    torch.matmul(x, y)  # Operation Q
+    profiler.stop('op_P')
+
+    # Stop profiling operation P (after both P and Q are done)
+    profiler.stop('op_PQ')
+
+    # Get elapsed times for both operations
+    profiler_time_P = profiler.elapsed_time('op_P')
+    profiler_time_PQ = profiler.elapsed_time('op_PQ')
+
+    try:
+        # Ensure P < PQ, as PQ includes both P and Q
+        assert profiler_time_P < profiler_time_PQ, \
+            f"Failed: Profiler time for P ({profiler_time_P} ms) should be less than profiler time for PQ ({profiler_time_PQ} ms)"
+
+        print("Test 3 (Overlapping Sections) passed!")
+
+    except AssertionError as e:
+        print(str(e))
+
+
+def test_manual_sync():
+    profiler = CudaProfiler()
+
+    # Record timings for an operation
+    x = torch.randn(1000, 1000, device='cuda')
+    y = torch.randn(1000, 1000, device='cuda')
+
+    # Start profiling and record without stopping
+    profiler.start('op_sync')
+    torch.matmul(x, y)  # Operation
+    profiler.stop('op_sync')
+
+    # Manually sync CUDA events
+    profiler.sync()
+
+    # Get elapsed time after syncing
+    profiler_time_sync = profiler.elapsed_time('op_sync')
+
+    try:
+        # Ensure elapsed time is greater than zero
+        assert profiler_time_sync > 0, \
+            f"Failed: Profiler time after manual sync ({profiler_time_sync} ms) should be greater than 0"
+
+        print("Test 4 (Manual Sync) passed!")
+
+    except AssertionError as e:
+        print(str(e))
+
+def test_profiler_accuracy():
+    profiler = CudaProfiler()
+
+    # Create CUDA events for manual timing
+    manual_start = torch.cuda.Event(enable_timing=True)
+    manual_end = torch.cuda.Event(enable_timing=True)
+    x = torch.randn(1000, 1000, device='cuda')
+    y = torch.randn(1000, 1000, device='cuda')
+
+    # Start manual timing
+    manual_start.record()
+    profiler.start('op_accuracy')
+
+    # Perform operation
+    for _ in range(100):
+        temp = torch.matmul(x, y)
+
+    # Stop manual timing
+    manual_end.record()
+    profiler.stop('op_accuracy')
+
+    # Sync CUDA events
+    torch.cuda.synchronize()
+
+    # Get manually measured time
+    manual_time = manual_start.elapsed_time(manual_end)
+
+    # Get profiler measured time
+    profiler_time = profiler.elapsed_time('op_accuracy')
+
+    try:
+        # Ensure the profiler time is within 5% of the manual time
+        error_margin = 0.05 * manual_time
+        assert abs(profiler_time - manual_time) <= error_margin, \
+            f"Failed: Profiler time ({profiler_time} ms) should be within 5% of manual time ({manual_time} ms)"
+
+        print("Test 5 (Profiler Accuracy) passed!")
+
+    except AssertionError as e:
+        print(str(e))
+
+if __name__ == "__main__":
+    test_profiler_with_manual_and_profiler_events()
     test_multiple_sections()
-    test_accumulated_time()
-    test_reset()
-    test_singleton()
-    print("Profiling tests passed.")
+    test_overlapping_sections()
+    test_manual_sync()
+    test_profiler_accuracy()

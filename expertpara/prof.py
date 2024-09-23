@@ -3,7 +3,6 @@ import torch
 class CudaProfiler:
     def __init__(self):
         self.events = {}
-        self.current_start = None
         self.is_started = False
 
     def start(self, name):
@@ -12,6 +11,8 @@ class CudaProfiler:
         """
         if name not in self.events:
             self.events[name] = {'start': [], 'end': [], 'elapsed': 0.0}
+        assert len(self.events[name]['start']) == len(self.events[name]['end']), \
+            f"Cannot start '{name}' as there are more starts than stops"
         start_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         self.events[name]['start'].append(start_event)
@@ -20,10 +21,9 @@ class CudaProfiler:
         """
         Stop recording time for a named section. Accumulates total time for multiple stops.
         """
-        
         assert name in self.events, f"No events recorded for '{name}'"
-        assert len(self.events[name]['start']) > len(self.events[name]['end']), \
-        f"Cannot stop '{name}' as there are more stops than starts"
+        assert len(self.events[name]['start'])-1 == len(self.events[name]['end']), \
+            f"Cannot stop '{name}' as there are more stops than starts"
         end_event = torch.cuda.Event(enable_timing=True)
         end_event.record()
         self.events[name]['end'].append(end_event)
@@ -31,14 +31,25 @@ class CudaProfiler:
     def elapsed_time(self, name):
         """
         Get the total accumulated time for a specific named section.
-        It syncs only when calculating the elapsed time.
+        It syncs only when calculating the elapsed time and stores the result.
         """
         if name not in self.events:
             raise ValueError(f"No events recorded for '{name}'")
+        
         torch.cuda.synchronize()
-        total_time = 0.0
+        # Ensure all started events have corresponding stopped events
+        if len(self.events[name]['start']) != len(self.events[name]['end']):
+            raise RuntimeError(f"Mismatch between start and stop events for '{name}'")
+        total_time = self.events[name]['elapsed']
+        
+        # Accumulate new times and clear events
         for start, end in zip(self.events[name]['start'], self.events[name]['end']):
             total_time += start.elapsed_time(end)
+        
+        # Store the accumulated time and clear the events
+        self.events[name]['elapsed'] = total_time
+        self.events[name]['start'] = []
+        self.events[name]['end'] = []
         
         return total_time
 
@@ -62,9 +73,9 @@ class CudaProfiler:
         Reset all stored events.
         """
         self.events = {}
-        self.current_start = None
 
     _instance = None
+
     @staticmethod
     def prof():
         """
@@ -75,8 +86,6 @@ class CudaProfiler:
         return CudaProfiler._instance
 
 """
-
-
 # Example usage
 profiler = CudaProfiler()
 
