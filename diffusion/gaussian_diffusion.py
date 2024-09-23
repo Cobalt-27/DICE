@@ -494,7 +494,7 @@ class GaussianDiffusion:
             from tqdm.auto import tqdm
 
             indices = tqdm(indices)
-
+        from expertpara.diep import cache_enable, cache_clear
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():

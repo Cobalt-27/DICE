@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from ep_fwd import moe_infer_ep
+from .ep_fwd import moe_infer_ep
 import random
 import socket
 import time
