@@ -2,13 +2,18 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from .ep_fwd import moe_infer_ep
+from expertpara.ep_fwd import moe_infer_ep
 import random
 import socket
 import time
 
 """
 NOTE
+
+To run tests:
+
+python3 -m tests.test_ep
+
 If the test shows message like:
 
 [W socket.cpp:601] [c10d] The client socket has failed to connect to [localhost]:33683 (errno: 99 - Cannot assign requested address).
@@ -149,4 +154,4 @@ def test_infer(repeats=3):
         )
 
 if __name__ == '__main__':
-    test_infer(repeats=20)
+    test_infer(repeats=3)
