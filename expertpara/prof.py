@@ -15,20 +15,18 @@ class CudaProfiler:
         start_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         self.events[name]['start'].append(start_event)
-        self.is_started = True
 
     def stop(self, name):
         """
         Stop recording time for a named section. Accumulates total time for multiple stops.
         """
-        if not self.is_started:
-            raise RuntimeError("No timer was started.")
         
         assert name in self.events, f"No events recorded for '{name}'"
+        assert len(self.events[name]['start']) > len(self.events[name]['end']), \
+        f"Cannot stop '{name}' as there are more stops than starts"
         end_event = torch.cuda.Event(enable_timing=True)
         end_event.record()
         self.events[name]['end'].append(end_event)
-        self.is_started = False
 
     def elapsed_time(self, name):
         """
@@ -37,10 +35,9 @@ class CudaProfiler:
         """
         if name not in self.events:
             raise ValueError(f"No events recorded for '{name}'")
-
+        torch.cuda.synchronize()
         total_time = 0.0
         for start, end in zip(self.events[name]['start'], self.events[name]['end']):
-            torch.cuda.synchronize()
             total_time += start.elapsed_time(end)
         
         return total_time
@@ -65,7 +62,6 @@ class CudaProfiler:
         Reset all stored events.
         """
         self.events = {}
-        self.is_started = False
         self.current_start = None
 
     _instance = None

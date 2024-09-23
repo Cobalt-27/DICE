@@ -23,6 +23,8 @@ from PIL import Image
 import numpy as np
 import math
 import argparse
+from expertpara.prof import CudaProfiler
+from expertpara.prof_analyse import analyse_prof
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -108,6 +110,9 @@ def main(args):
     pbar = range(iterations)
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
+    prof_path = f"{sample_folder_dir}/prof.txt"
+    if rank == 0 and os.path.exists(prof_path):
+        os.remove(prof_path)
     for _ in pbar:
         # Sample inputs:
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
@@ -127,9 +132,13 @@ def main(args):
         # Sample images:
         from expertpara.diep import cache_clear
         cache_clear()
+        CudaProfiler.prof().start('total')
         samples = diffusion.p_sample_loop(
             sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
         )
+        CudaProfiler.prof().stop('total')
+        if rank == 0:
+            analyse_prof(CudaProfiler.prof(), prof_path)
         if using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
 
@@ -145,7 +154,8 @@ def main(args):
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
     if rank == 0:
-        create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
+        # XXX: no npz for now
+        # create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
         print("Done.")
     dist.barrier()
     dist.destroy_process_group()

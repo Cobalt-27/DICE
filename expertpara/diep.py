@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
-
+from .prof import CudaProfiler
 """
 DiEP: Diffusion model with async Expert Parallelism
 
@@ -50,6 +50,12 @@ def _cache_get(cache, key):
 
 
 @torch.no_grad()
+def _wait(handles):
+    if handles is not None:
+        for handle in handles:
+            handle.wait()
+
+@torch.no_grad()
 def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, cache_key):
     """
     Dispatch tokens to experts, async all2all.
@@ -70,9 +76,9 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         return buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     prev_handles, prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(_diep_cache_dispatch, cache_key)
-    if prev_handles is not None:
-        for handle in prev_handles:
-            handle.wait()
+    CudaProfiler.prof().start('dispatch_wait')
+    _wait(prev_handles)
+    CudaProfiler.prof().stop('dispatch_wait')
     # async all2all, to be received in next step
     buf, handles = global_dispatch(
         grouped_dup_inp=grouped_dup_inp,
@@ -105,9 +111,9 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         return buf, grouped_idx_dup, flat_expert_weights
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     prev_handles, prev_buf, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(_diep_cache_combine, cache_key)
-    if prev_handles is not None:
-        for handle in prev_handles:
-            handle.wait()
+    CudaProfiler.prof().start('combine_wait')
+    _wait(prev_handles)
+    CudaProfiler.prof().stop('combine_wait')
     # async all2all, to be received in next step
     buf, handles = global_combine(
         grouped_dup_outp=grouped_dup_outp,

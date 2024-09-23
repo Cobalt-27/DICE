@@ -4,6 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
 from .diep import global_combine_async,global_dispatch_async
+from .prof import CudaProfiler
 # ref: https://github.com/laekov/fastmoe
 
 @torch.no_grad()
@@ -73,6 +74,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     """
     # NOTE: Global Dispatch
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#combined tokens * num_experts_per_tok, h]
+    CudaProfiler.prof().start('dispatch_func')
     if not async_op:
         mlp_inp, _ = global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
     else:
@@ -89,12 +91,14 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                       flat_expert_weights=flat_expert_weights,
                                       cache_key=cache_key)
         grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+    CudaProfiler.prof().stop('dispatch_func')
     # MLP
+    CudaProfiler.prof().start('mlp')
     mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
-    
+    CudaProfiler.prof().stop('mlp')
     # NOTE: Global Combine
     # mapping: [#combined tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
-    
+    CudaProfiler.prof().start('combine_func')
     if not async_op:
         grouped_dup_outp, _ = global_combine(mlp_outp, token_counts_local, token_counts_global)
     else:
@@ -109,6 +113,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                     flat_expert_weights=flat_expert_weights,
                                     cache_key=cache_key)
         grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+    CudaProfiler.prof().stop('combine_func')
     # Local combine
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
     outp_dup = _local_combine(inp=grouped_dup_outp, pos=grouped_idx_dup, out_size=flat_expert_indices.size(0))
@@ -195,6 +200,7 @@ def global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global, as
     send_start = 0
     recv_start = 0
     handle_list = []
+    CudaProfiler.prof().start('dispatch_all2all')
     for i in range(num_local_experts):
         handle=dist.all_to_all_single(
             output=buf[recv_start:recv_start+recv_size[i]],
@@ -206,6 +212,7 @@ def global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global, as
         handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
+    CudaProfiler.prof().stop('dispatch_all2all')
     assert send_start == grouped_dup_inp.size(0) and recv_start == buf.size(0)
     return buf, handle_list
 
@@ -240,6 +247,7 @@ def global_combine(grouped_dup_outp, token_counts_local, token_counts_global, as
     send_start = 0
     recv_start = 0
     handle_list = []
+    CudaProfiler.prof().start('combine_all2all')
     for i in range(num_local_experts):
         handle=dist.all_to_all_single(
             output=buf[recv_start:recv_start+recv_size[i]],
@@ -251,6 +259,7 @@ def global_combine(grouped_dup_outp, token_counts_local, token_counts_global, as
         handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
+    CudaProfiler.prof().stop('combine_all2all')
     assert send_start == grouped_dup_outp.size(0) and recv_start == buf.size(0)
     return buf, handle_list
 
