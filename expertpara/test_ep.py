@@ -77,10 +77,6 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
         
         torch.manual_seed(seed + rank) # each proc shall use a different seed for input
         
-        
-        flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
-        flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)
-        
         # experts = [nn.Identity() for _ in range(num_total_experts)]
         
         # Run the _infer_grouped function
@@ -88,6 +84,8 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
         prev_out = []
         for i in range(n_iter):
             inp = torch.randn(n_tokens, hidden_size).to(device)
+            flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
+            flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)
             expert_out = moe_infer_ep(
                 inp=inp,
                 experts=experts,
