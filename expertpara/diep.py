@@ -34,12 +34,12 @@ To store a all2all operation, we need to store the following information:
 
 
 """
-diep_cache_dispatch = {}
-diep_cache_combine = {}
+_diep_cache_dispatch = {}
+_diep_cache_combine = {}
 
 def cache_clear():
-    diep_cache_dispatch.clear()
-    diep_cache_combine.clear()
+    _diep_cache_dispatch.clear()
+    _diep_cache_combine.clear()
 
 def _cache_put(cache, key, val):
     # must hold the send buf to prevent it from being released
@@ -47,18 +47,6 @@ def _cache_put(cache, key, val):
 
 def _cache_get(cache, key):
     return cache[key]
-
-enable_dispatch_async = True
-enable_combine_async = True
-
-def cache_enable(async_dispatch, async_combine):
-    global enable_dispatch_async, enable_combine_async
-    enable_dispatch_async = async_dispatch
-    enable_combine_async = async_combine
-    if not async_dispatch:
-        diep_cache_dispatch.clear()
-    if not async_combine:
-        diep_cache_combine.clear()
 
 
 @torch.no_grad()
@@ -70,7 +58,7 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     """
     from .ep_fwd import global_dispatch
     assert cache_key is not None
-    if not enable_dispatch_async or not cache_key in diep_cache_dispatch:
+    if not cache_key in _diep_cache_dispatch:
         # to be warm up
         buf, _ = global_dispatch(
             grouped_dup_inp=grouped_dup_inp,
@@ -78,11 +66,10 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        if enable_dispatch_async:
-            _cache_put(diep_cache_dispatch, cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, None))
+        _cache_put(_diep_cache_dispatch, cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, None))
         return buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
-    prev_handles, prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(diep_cache_dispatch, cache_key)
+    prev_handles, prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(_diep_cache_dispatch, cache_key)
     if prev_handles is not None:
         for handle in prev_handles:
             handle.wait()
@@ -93,7 +80,7 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         token_counts_global=token_counts_global,
         async_op=True,
     )
-    _cache_put(diep_cache_dispatch, cache_key, (handles, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, grouped_dup_inp))
+    _cache_put(_diep_cache_dispatch, cache_key, (handles, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, grouped_dup_inp))
     return prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights
 
 @torch.no_grad()
@@ -106,7 +93,7 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
     
     from .ep_fwd import global_combine
     assert cache_key is not None
-    if not enable_combine_async or not cache_key in diep_cache_combine:
+    if not cache_key in _diep_cache_combine:
         # to be warm up
         buf, _ = global_combine(
             grouped_dup_outp=grouped_dup_outp,
@@ -114,11 +101,10 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        if enable_combine_async:
-            _cache_put(diep_cache_combine, cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
+        _cache_put(_diep_cache_combine, cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
         return buf, grouped_idx_dup, flat_expert_weights
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
-    prev_handles, prev_buf, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(diep_cache_combine, cache_key)
+    prev_handles, prev_buf, prev_grouped_idx_dup, prev_flat_expert_weights, prev_send_buf = _cache_get(_diep_cache_combine, cache_key)
     if prev_handles is not None:
         for handle in prev_handles:
             handle.wait()
@@ -129,5 +115,5 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         token_counts_global=token_counts_global,
         async_op=True,
     )
-    _cache_put(diep_cache_combine, cache_key, (handles, buf, grouped_idx_dup, flat_expert_weights, grouped_dup_outp)) # no need to store token counts
+    _cache_put(_diep_cache_combine, cache_key, (handles, buf, grouped_idx_dup, flat_expert_weights, grouped_dup_outp)) # no need to store token counts
     return prev_buf, prev_grouped_idx_dup, prev_flat_expert_weights
