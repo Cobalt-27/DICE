@@ -157,6 +157,9 @@ def main(args):
             index = i * dist.get_world_size() + rank + total
             Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
         total += global_batch_size
+        
+        # NOTE: GPU mem usage surges after each iter, need to clear cache
+        torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
