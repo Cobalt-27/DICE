@@ -2,11 +2,11 @@
 
 # BUG: sample_ddp cannot run XL, missing state_dict key
 # may due to missing flash_attn 
-# model="DiT-XL/2"
-# ckpt_path="/mnt/dit_moe_xl_8E2A.pt"
+model="DiT-XL/2"
+ckpt_path="/mnt/dit_moe_xl_8E2A.pt"
 
-model="DiT-B/2"
-ckpt_path="/mnt/dit_moe_b_8E2A.pt"
+# model="DiT-B/2"
+# ckpt_path="/mnt/dit_moe_b_8E2A.pt"
 
 # model="DiT-S/2"
 # ckpt_path="/mnt/dit_moe_s_8E2A.pt"
@@ -17,7 +17,7 @@ num_sample_steps="500"
 image_size="256"
 cfg_scale="1.5"
 fid_samples="256"
-per_proc_batch_size="8"
+per_proc_batch_size="2"
 
 CUDA_VISIBLE_DEVICES=0,1
 

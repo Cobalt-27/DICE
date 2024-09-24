@@ -145,7 +145,6 @@ def main(args):
     if rank == 0 and os.path.exists(prof_path):
         os.remove(prof_path)
         
-    cache_size_list = []
     for _ in pbar:
         # Sample inputs:
         
@@ -163,7 +162,8 @@ def main(args):
                 CudaProfiler.prof().start('total')
                 images = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = 7.0)
                 CudaProfiler.prof().stop('total')
-                samples = vae.decode(images[-1] / 0.18215).sample
+                samples = vae.decode(images[-1] / 0.18215).sample # only the last one is needed
+                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
         else:
             z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
             y = torch.randint(0, args.num_classes, (n,), device=device)
@@ -183,13 +183,13 @@ def main(args):
                 sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
             )
             CudaProfiler.prof().stop('total')
+            print(f"sample shape: {samples.shape}")
+            samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
             # XXX: extremely large mem usage after each iter, need to find out why
             # XXX: 0.18215???
             samples = vae.decode(samples / 0.18215).sample
-        cache_size_list.append(cache_size())
-        avg_cache_size_mb = (sum(cache_size_list) / len(cache_size_list)) / (1024 * 1024)
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
         # Save samples to disk as individual .png files
@@ -198,12 +198,9 @@ def main(args):
             Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
         total += global_batch_size
         
-        # NOTE: GPU mem usage surges after each iter, need to clear cache
-        # but this workaround is not working, the max mem usage is unchanged
         if rank == 0:
-            print(f"avg cache size: {avg_cache_size_mb:.2f} MB")
+            print(f"avg cache size: {cache_size() / (1024 * 1024):.2f} MB")
             analyse_prof(CudaProfiler.prof(), prof_path)
-        torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
