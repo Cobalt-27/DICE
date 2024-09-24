@@ -27,7 +27,7 @@ import argparse
 from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
-from expertpara.diep import cache_clear, cache_size, cache_init
+from expertpara.diep import cache_clear, cached_tensors_size, cache_init
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -199,7 +199,7 @@ def main(args):
         total += global_batch_size
         
         if rank == 0:
-            print(f"avg cache size: {cache_size() / (1024 * 1024):.2f} MB")
+            print(f"Cache size: {cached_tensors_size() / (1024 * 1024):.2f} MB")
             analyse_prof(CudaProfiler.prof(), prof_path)
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
