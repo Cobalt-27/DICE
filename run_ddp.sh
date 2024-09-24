@@ -17,6 +17,7 @@ torchrun --nproc_per_node 2 sample_ddp.py \
 --model $model \
 --vae-path $vae_path \
 --ckpt $ckpt_path \
+--num-experts $num_experts \
 --image-size $image_size \
 --cfg-scale $cfg_scale \
 --num-sampling-steps $num_sample_steps \

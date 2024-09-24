@@ -25,6 +25,7 @@ import math
 import argparse
 from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
+from expertpara.etrim import trim_state_dict
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -73,12 +74,18 @@ def main(args):
     latent_size = args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
     ).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
-    model.load_state_dict(state_dict)
+    """
+    NOTE: trim unused experts, for ep only
+    """
+    trimmed_state_dict = trim_state_dict(state_dict, args.num_experts)
+    model.load_state_dict(trimmed_state_dict)
+    
     model.eval()  # important!
     diffusion = create_diffusion(str(args.num_sampling_steps))
     vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
@@ -169,6 +176,7 @@ if __name__ == "__main__":
     parser.add_argument("--sample-dir", type=str, default="samples")
     parser.add_argument("--per-proc-batch-size", type=int, default=32)
     parser.add_argument("--num-fid-samples", type=int, default=50_000)
+    parser.add_argument('--num-experts', default=16, type=int,) 
     parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--cfg-scale",  type=float, default=1.5)

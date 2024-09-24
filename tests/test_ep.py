@@ -49,7 +49,7 @@ def moe_infer_single_node(experts, num_experts_per_tok, x, flat_expert_indices, 
             expert_cache.scatter_reduce_(0, exp_token_idx.view(-1, 1).repeat(1, x.shape[-1]), expert_out, reduce='sum')
     return expert_cache
 
-def _find_port():
+def find_port(): # make it public to be used in other dist tests
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('', 0))
         port = s.getsockname()[1]
@@ -141,17 +141,17 @@ def test_infer(repeats=3):
         print("Running sync test...")
         mp.spawn(
             run_test,
-            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, _find_port(), seed + i, False),
+            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed + i, False),
             nprocs=WORLD_SIZE,
             join=True
         )
         print(f"Running async test...")
         mp.spawn(
             run_test,
-            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, _find_port(), seed + i, True),
+            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed + i, True),
             nprocs=WORLD_SIZE,
             join=True
         )
 
 if __name__ == '__main__':
-    test_infer(repeats=3)
+    test_infer(repeats=1)

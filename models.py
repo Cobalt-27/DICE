@@ -15,6 +15,7 @@ import torch.nn as nn
 import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
+from expertpara.etrim import trim_module_list
 
 import torch.nn.functional as F
 
@@ -252,6 +253,12 @@ class SparseMoeBlock(nn.Module):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
+        
+        """
+        NOTE: trim unused experts, for ep only
+        """
+        self.experts = trim_module_list(self.experts, num_experts)
+        
         self.gate = MoEGate(embed_dim=embed_dim, num_experts=num_experts, num_experts_per_tok=num_experts_per_tok)
         self.n_shared_experts = 2
         
