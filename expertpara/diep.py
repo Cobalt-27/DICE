@@ -34,8 +34,21 @@ To store a all2all operation, we need to store the following information:
 
 
 """
-_diep_cache_dispatch = {}
-_diep_cache_combine = {}
+
+"""
+format:
+(handles, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, grouped_dup_inp)
+"""
+_diep_cache_dispatch = None
+
+"""
+format:
+(handles, buf, grouped_idx_dup, flat_expert_weights, grouped_dup_outp)
+"""
+_diep_cache_combine = None
+_cache_capacity = None # number of entries in the cache, should equals to the layer count
+
+_cache_auto_gc = False # whether to automatically garbage collect the cache
 
 def cache_size():
     """
@@ -43,21 +56,63 @@ def cache_size():
     """
     return sum(
         sum(
-            [sum([x.element_size()*x.numel() for x in v if isinstance(x, torch.Tensor)]) for v in cache.values()]
+            [sum([x.element_size()*x.numel() for x in v if isinstance(x, torch.Tensor)]) for v in cache if v is not None]
             ) for cache in [_diep_cache_dispatch, _diep_cache_combine]
         )
+    
+def cache_init(cache_capacity, auto_gc = False):
+    global _diep_cache_dispatch, _diep_cache_combine, _cache_capacity, _cache_auto_gc
+    _cache_capacity = cache_capacity
+    _cache_auto_gc = auto_gc
+    _diep_cache_dispatch = [None for _ in range(cache_capacity)]
+    _diep_cache_combine = [None for _ in range(cache_capacity)]
 
 def cache_clear():
-    _diep_cache_dispatch.clear()
-    _diep_cache_combine.clear()
+    assert _cache_capacity is not None
+    global _diep_cache_dispatch, _diep_cache_combine
+    _diep_cache_dispatch = [None for _ in range(_cache_capacity)]
+    _diep_cache_combine = [None for _ in range(_cache_capacity)]
 
-def _cache_put(cache, key, val):
+def _cache_put(cache, key:int, val):
+    assert _cache_capacity is not None and cache is not None
     # must hold the send buf to prevent it from being released
+    assert isinstance(key, int), "Key must be an integer"
+    
+    if _cache_auto_gc: # garbage collect before putting
+        _cache_gc(cache)
+    
     cache[key] = val
 
-def _cache_get(cache, key):
+def _cache_get(cache, key:int):
+    assert _cache_capacity is not None and cache is not None
+    assert isinstance(key, int), "Key must be an integer"
     return cache[key]
 
+def _cache_contain(cache, key:int):
+    assert _cache_capacity is not None and cache is not None
+    assert isinstance(key, int), "Key must be an integer"
+    return cache[key] is not None
+
+def _cache_gc(cache):
+    """
+    Cache entries are async all2all handles and their bufs(send/recv).
+    If the all2all has completed, we can release the send buf, recv buf is needed when cache is read.
+    """
+    assert len(cache) == _cache_capacity and cache is not None
+    for i in range(_cache_capacity):
+        if cache[i] is not None:
+            item = list(cache[i])
+            prev_handles = item[0]
+            if prev_handles is not None:
+                can_clear = True
+                for handle in prev_handles:
+                    if not handle.is_completed():
+                        can_clear = False
+                        break
+                if can_clear:# only remove the handle and send buf
+                    item[0] = None # NOTE: make sure the first element is the handles
+                    item[-1] = None # NOTE: make sure the last element is the send buf
+                    cache[i] = tuple(item)
 
 @torch.no_grad()
 def _wait(handles):
@@ -74,7 +129,7 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     """
     from .ep_fwd import global_dispatch
     assert cache_key is not None
-    if not cache_key in _diep_cache_dispatch:
+    if not _cache_contain(_diep_cache_dispatch, cache_key):
         # to be warm up
         buf, _ = global_dispatch(
             grouped_dup_inp=grouped_dup_inp,
@@ -109,7 +164,7 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
     
     from .ep_fwd import global_combine
     assert cache_key is not None
-    if not cache_key in _diep_cache_combine:
+    if not _cache_contain(_diep_cache_combine, cache_key):
         # to be warm up
         buf, _ = global_combine(
             grouped_dup_outp=grouped_dup_outp,

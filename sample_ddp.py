@@ -27,7 +27,7 @@ import argparse
 from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
-from expertpara.diep import cache_clear, cache_size
+from expertpara.diep import cache_clear, cache_size, cache_init
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -144,7 +144,8 @@ def main(args):
     prof_path = f"{sample_folder_dir}/prof.txt"
     if rank == 0 and os.path.exists(prof_path):
         os.remove(prof_path)
-        
+    
+    cache_init(cache_capacity=model.depth, auto_gc=args.auto_gc)
     for _ in pbar:
         # Sample inputs:
         
@@ -183,7 +184,6 @@ def main(args):
                 sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
             )
             CudaProfiler.prof().stop('total')
-            print(f"sample shape: {samples.shape}")
             samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
@@ -230,7 +230,8 @@ if __name__ == "__main__":
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
-    parser.add_argument("--diep", action="store_true")
+    parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
+    parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--extra-folder-name",type=str,default=None)
     parser.add_argument("--extra-name",type=str,default=None)
     args = parser.parse_args()

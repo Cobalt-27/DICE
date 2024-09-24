@@ -9,7 +9,6 @@
 # MAE: https://github.com/facebookresearch/mae/blob/main/models_mae.py
 # --------------------------------------------------------
 
-import uuid
 import torch
 import torch.nn as nn
 import numpy as np
@@ -249,7 +248,7 @@ class SparseMoeBlock(nn.Module):
     """
     A mixed expert module containing shared experts.
     """
-    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2):
+    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
@@ -265,7 +264,7 @@ class SparseMoeBlock(nn.Module):
         if self.n_shared_experts is not None:
             intermediate_size =  embed_dim * self.n_shared_experts
             self.shared_experts = MoeMLP(hidden_size = embed_dim, intermediate_size = intermediate_size, pretraining_tp=pretraining_tp)
-        self.cache_key = str(uuid.uuid4())
+        self.cache_key = layer_idx
         
         
     def forward(self, hidden_states):
@@ -414,7 +413,7 @@ class DiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4,
         num_experts=8, num_experts_per_tok=2, pretraining_tp=2, 
-        use_flash_attn=False, **block_kwargs
+        use_flash_attn=False, layer_idx=None, **block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -426,7 +425,7 @@ class DiTBlock(nn.Module):
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
         # self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0) 
-        self.moe = SparseMoeBlock(hidden_size, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp)
+        self.moe = SparseMoeBlock(hidden_size, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp, layer_idx=layer_idx)
 
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
@@ -486,6 +485,7 @@ class DiT(nn.Module):
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
+        self.depth = depth
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
@@ -495,7 +495,7 @@ class DiT(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
         self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp, use_flash_attn) for _ in range(depth)
+            DiTBlock(hidden_size, num_heads, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp, use_flash_attn, layer_idx=i) for i in range(depth)
         ])
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
