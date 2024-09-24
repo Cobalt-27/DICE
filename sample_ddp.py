@@ -95,10 +95,14 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.replace("/", "-")
-    ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
-    folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
-                  f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
+    # ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
+    # folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
+    #               f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
+    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}-size-{args.image_size}-" \
+                  f"-seed-{args.global_seed}-diep-{args.diep}{'' if args.extra_name is None else f'-{args.extra_name}'}"
     sample_folder_dir = f"{args.sample_dir}/{folder_name}"
+    if args.extra_folder_name is not None:
+        sample_folder_dir = f"{args.sample_dir}/{args.extra_folder_name}/{folder_name}"
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
         print(f"Saving .png samples at {sample_folder_dir}")
@@ -149,13 +153,13 @@ def main(args):
         CudaProfiler.prof().stop('total')
         cache_size_list.append(cache_size())
         avg_cache_size_mb = (sum(cache_size_list) / len(cache_size_list)) / (1024 * 1024)
-        print(f"Average cache size: {avg_cache_size_mb:.2f} MB")
         
         if rank == 0:
+            print(f"avg cache size: {avg_cache_size_mb:.2f} MB")
             analyse_prof(CudaProfiler.prof(), prof_path)
         if using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-
+        # XXX: extremely large mem usage after each iter, need to find out why
         samples = vae.decode(samples / 0.18215).sample
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
@@ -166,6 +170,7 @@ def main(args):
         total += global_batch_size
         
         # NOTE: GPU mem usage surges after each iter, need to clear cache
+        # but this workaround is not working, the max mem usage is unchanged
         torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
@@ -197,5 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
     parser.add_argument("--diep", action="store_true")
+    parser.add_argument("--extra-folder-name",type=str,default=None)
+    parser.add_argument("--extra-name",type=str,default=None)
     args = parser.parse_args()
     main(args)
