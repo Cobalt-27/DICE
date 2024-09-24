@@ -71,7 +71,9 @@ class RectifiedFlow(torch.nn.Module):
         b = z.size(0)
         dt = 1.0 / sample_steps
         dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
-        images = [z]
+        # XXX: we only need to store the last image
+        # images = [z]
+        final_image = z
         for i in range(sample_steps, 0, -1):
             t = i / sample_steps
             t = torch.tensor([t] * b).to(z.device)
@@ -86,5 +88,7 @@ class RectifiedFlow(torch.nn.Module):
                 vc = vu + cfg * (vc - vu)
             x = z - i * dt * vc
             z = z - dt * vc
-            images.append(x)
-        return images
+            # images.append(x)
+            final_image = x
+        # return images
+        return final_image
