@@ -17,6 +17,7 @@ from models import DiT_models
 from download import find_model
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
+from diffusion.rectified_flow import RectifiedFlow 
 from tqdm import tqdm
 import os
 from PIL import Image
@@ -70,14 +71,28 @@ def main(args):
         assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
         assert args.image_size in [256, 512]
         assert args.num_classes == 1000
-
+    rf=False
+    if args.model == "DiT-XL/2" or args.model == "DiT-G/2": 
+        pretraining_tp=1
+        use_flash_attn=True 
+        dtype = torch.float16
+        rf=True
+    else:
+        pretraining_tp=2
+        use_flash_attn=False 
+        dtype = torch.float32
     # Load model:
     latent_size = args.image_size // 8
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes,
         num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
+        pretraining_tp=pretraining_tp,
+        use_flash_attn=use_flash_attn,
     ).to(device)
+    
+    if dtype == torch.float16:
+        model = model.half()
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
@@ -88,7 +103,10 @@ def main(args):
     model.load_state_dict(trimmed_state_dict)
     
     model.eval()  # important!
-    diffusion = create_diffusion(str(args.num_sampling_steps))
+    if rf:
+        diffusion = RectifiedFlow(model)
+    else:
+        diffusion = create_diffusion(str(args.num_sampling_steps))
     vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
     using_cfg = args.cfg_scale > 1.0
@@ -130,37 +148,48 @@ def main(args):
     cache_size_list = []
     for _ in pbar:
         # Sample inputs:
-        z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
-        y = torch.randint(0, args.num_classes, (n,), device=device)
-
-        # Setup classifier-free guidance:
-        if using_cfg:
-            z = torch.cat([z, z], 0)
-            y_null = torch.tensor([1000] * n, device=device)
-            y = torch.cat([y, y_null], 0)
-            model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-            sample_fn = model.forward_with_cfg
-        else:
-            model_kwargs = dict(y=y)
-            sample_fn = model.forward
+        
 
         # Sample images:
         cache_clear()
-        CudaProfiler.prof().start('total')
-        samples = diffusion.p_sample_loop(
-            sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
-        )
-        CudaProfiler.prof().stop('total')
+        
+        if dtype == torch.float16: 
+            # use rf
+            with torch.autocast(device_type='cuda'):
+                STEPSIZE = 50
+                init_noise = torch.randn(n, model.in_channels, latent_size, latent_size, device=device) 
+                # conds = torch.tensor(class_labels, device=device)
+                conds = torch.randint(0, args.num_classes, (n,), device=device)
+                CudaProfiler.prof().start('total')
+                images = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = 7.0)
+                CudaProfiler.prof().stop('total')
+                samples = vae.decode(images[-1] / 0.18215).sample
+        else:
+            z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
+            y = torch.randint(0, args.num_classes, (n,), device=device)
+
+            # Setup classifier-free guidance:
+            if using_cfg:
+                z = torch.cat([z, z], 0)
+                y_null = torch.tensor([1000] * n, device=device)
+                y = torch.cat([y, y_null], 0)
+                model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+                sample_fn = model.forward_with_cfg
+            else:
+                model_kwargs = dict(y=y)
+                sample_fn = model.forward
+            CudaProfiler.prof().start('total')
+            samples = diffusion.p_sample_loop(
+                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
+            )
+            CudaProfiler.prof().stop('total')
+            if using_cfg:
+                samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+            # XXX: extremely large mem usage after each iter, need to find out why
+            # XXX: 0.18215???
+            samples = vae.decode(samples / 0.18215).sample
         cache_size_list.append(cache_size())
         avg_cache_size_mb = (sum(cache_size_list) / len(cache_size_list)) / (1024 * 1024)
-        
-        if rank == 0:
-            print(f"avg cache size: {avg_cache_size_mb:.2f} MB")
-            analyse_prof(CudaProfiler.prof(), prof_path)
-        if using_cfg:
-            samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-        # XXX: extremely large mem usage after each iter, need to find out why
-        samples = vae.decode(samples / 0.18215).sample
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
         # Save samples to disk as individual .png files
@@ -171,6 +200,9 @@ def main(args):
         
         # NOTE: GPU mem usage surges after each iter, need to clear cache
         # but this workaround is not working, the max mem usage is unchanged
+        if rank == 0:
+            print(f"avg cache size: {avg_cache_size_mb:.2f} MB")
+            analyse_prof(CudaProfiler.prof(), prof_path)
         torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz

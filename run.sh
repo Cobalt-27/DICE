@@ -1,7 +1,9 @@
 #!/bin/bash
 
-model="DiT-S/2"
-ckpt_path="/mnt/dit_moe_s_8E2A.pt"
+# model="DiT-S/2"
+# ckpt_path="/mnt/dit_moe_s_8E2A.pt"
+model="DiT-XL/2"
+ckpt_path="/mnt/dit_moe_xl_8E2A.pt"
 vae_path="/mnt/vae"
 num_experts="8"
 num_sample_steps="1000"
@@ -18,3 +20,4 @@ python3 sample.py \
 --cfg-scale $cfg_scale \
 --num_experts $num_experts \
 --num-sampling-steps $num_sample_steps \
+--rf \

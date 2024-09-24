@@ -38,6 +38,13 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     
     # NOTE: Tensor of size [num_total_experts], counts of tokens routed to each expert on the local worker.
     token_counts_local = flat_expert_indices.bincount()
+    
+    # XXX: XL model have extreme cases, some experts receivs no input
+    if token_counts_local.size(0) != num_total_experts:
+        expanded_counts = torch.zeros(num_total_experts, dtype=token_counts_local.dtype, device=token_counts_local.device)
+        expanded_counts[:token_counts_local.size(0)] = token_counts_local
+        token_counts_local = expanded_counts
+    
     # NOTE: refer to exchange_token_counts for details, counts of tokens routed to this worker's local experts for all workers.
     # used for dispatch recv and combine send
     token_counts_global = exchange_token_counts(token_counts_local)
