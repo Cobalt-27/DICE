@@ -4,3 +4,4 @@
 python3 -m tests.test_ep
 python3 -m tests.test_prof
 python3 -m tests.test_etrim
+python3 -m tests.test_cache

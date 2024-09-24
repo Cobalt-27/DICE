@@ -26,6 +26,7 @@ import argparse
 from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
+from expertpara.diep import cache_clear, cache_size
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -109,7 +110,8 @@ def main(args):
     # To make things evenly-divisible, we'll sample a bit more than we need and then discard the extra samples:
     total_samples = int(math.ceil(args.num_fid_samples / global_batch_size) * global_batch_size)
     if rank == 0:
-        print(f"Total number of images that will be sampled: {total_samples}")
+        # print(f"Total number of images that will be sampled: {total_samples}")
+        print(f"Sampling {total_samples} images with batch size {n} on {dist.get_world_size()} workers.")
     assert total_samples % dist.get_world_size() == 0, "total_samples must be divisible by world_size"
     samples_needed_this_gpu = int(total_samples // dist.get_world_size())
     assert samples_needed_this_gpu % n == 0, "samples_needed_this_gpu must be divisible by the per-GPU batch size"
@@ -120,6 +122,8 @@ def main(args):
     prof_path = f"{sample_folder_dir}/prof.txt"
     if rank == 0 and os.path.exists(prof_path):
         os.remove(prof_path)
+        
+    cache_size_list = []
     for _ in pbar:
         # Sample inputs:
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
@@ -137,13 +141,16 @@ def main(args):
             sample_fn = model.forward
 
         # Sample images:
-        from expertpara.diep import cache_clear
         cache_clear()
         CudaProfiler.prof().start('total')
         samples = diffusion.p_sample_loop(
             sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
         )
         CudaProfiler.prof().stop('total')
+        cache_size_list.append(cache_size())
+        avg_cache_size_mb = (sum(cache_size_list) / len(cache_size_list)) / (1024 * 1024)
+        print(f"Average cache size: {avg_cache_size_mb:.2f} MB")
+        
         if rank == 0:
             analyse_prof(CudaProfiler.prof(), prof_path)
         if using_cfg:

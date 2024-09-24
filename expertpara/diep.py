@@ -37,6 +37,16 @@ To store a all2all operation, we need to store the following information:
 _diep_cache_dispatch = {}
 _diep_cache_combine = {}
 
+def cache_size():
+    """
+    Measures the size of all the tensors in the cache in bytes.
+    """
+    return sum(
+        sum(
+            [sum([x.element_size()*x.numel() for x in v if isinstance(x, torch.Tensor)]) for v in cache.values()]
+            ) for cache in [_diep_cache_dispatch, _diep_cache_combine]
+        )
+
 def cache_clear():
     _diep_cache_dispatch.clear()
     _diep_cache_combine.clear()
