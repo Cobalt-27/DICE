@@ -81,42 +81,44 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     """
     # NOTE: Global Dispatch
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#combined tokens * num_experts_per_tok, h]
-    if not async_op:
-        mlp_inp, _ = global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
-    else:
-        (
-            mlp_inp, 
-            token_counts_local, 
-            token_counts_global, 
-            grouped_idx_dup, 
-            flat_expert_weights
-        ) = global_dispatch_async(grouped_dup_inp=grouped_dup_inp,
-                                      token_counts_local=token_counts_local,
-                                      token_counts_global=token_counts_global,
-                                      grouped_idx_dup=grouped_idx_dup,
-                                      flat_expert_weights=flat_expert_weights,
-                                      cache_key=cache_key)
-        grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+    with CudaProfiler.scope('global_dispatch'):
+        if not async_op:
+            mlp_inp, _ = global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global)
+        else:
+            (
+                mlp_inp, 
+                token_counts_local, 
+                token_counts_global, 
+                grouped_idx_dup, 
+                flat_expert_weights
+            ) = global_dispatch_async(grouped_dup_inp=grouped_dup_inp,
+                                        token_counts_local=token_counts_local,
+                                        token_counts_global=token_counts_global,
+                                        grouped_idx_dup=grouped_idx_dup,
+                                        flat_expert_weights=flat_expert_weights,
+                                        cache_key=cache_key)
+            grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # MLP
     CudaProfiler.prof().start('mlp')
     mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
     CudaProfiler.prof().stop('mlp')
     # NOTE: Global Combine
     # mapping: [#combined tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
-    if not async_op:
-        grouped_dup_outp, _ = global_combine(mlp_outp, token_counts_local, token_counts_global)
-    else:
-        (
-            grouped_dup_outp, 
-            grouped_idx_dup, 
-            flat_expert_weights
-        ) = global_combine_async(grouped_dup_outp=mlp_outp,
-                                    token_counts_local=token_counts_local,
-                                    token_counts_global=token_counts_global,
-                                    grouped_idx_dup=grouped_idx_dup,
-                                    flat_expert_weights=flat_expert_weights,
-                                    cache_key=cache_key)
-        grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+    with CudaProfiler.scope('global_combine'):
+        if not async_op:
+            grouped_dup_outp, _ = global_combine(mlp_outp, token_counts_local, token_counts_global)
+        else:
+            (
+                grouped_dup_outp, 
+                grouped_idx_dup, 
+                flat_expert_weights
+            ) = global_combine_async(grouped_dup_outp=mlp_outp,
+                                        token_counts_local=token_counts_local,
+                                        token_counts_global=token_counts_global,
+                                        grouped_idx_dup=grouped_idx_dup,
+                                        flat_expert_weights=flat_expert_weights,
+                                        cache_key=cache_key)
+            grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # Local combine
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
     outp_dup = _local_combine(inp=grouped_dup_outp, pos=grouped_idx_dup, out_size=flat_expert_indices.size(0))

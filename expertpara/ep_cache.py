@@ -1,5 +1,6 @@
 import torch
 from .offload import AsyncTensorOffloading
+from .prof import CudaProfiler
 
 """
 Cache structure:
@@ -61,7 +62,7 @@ def is_completed(handles):
     return True
 
 class All2AllCache:
-    def __init__(self, capacity, auto_gc, offload, prefetch_size, val_len):
+    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None):
         """
         capacity: the number of entries in the cache
         auto_gc: automatically clear send buffer after all2all completes
@@ -80,7 +81,7 @@ class All2AllCache:
     """
     NOTE: the second item in the value tuple is the recv_buf
     """
-    
+
     def _try_offload_entry(self, idx):
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
@@ -97,9 +98,7 @@ class All2AllCache:
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
             recv_buf.async_prefetch()
-        self.cache[idx] = tuple(value)
-        
-    
+
     def _wait_entry_if_needed(self, idx):
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
@@ -108,7 +107,7 @@ class All2AllCache:
             recv_buf = recv_buf.gpu_tensor
         value[RECV_BUF_IDX] = recv_buf
         self.cache[idx] = tuple(value)
-        
+
     def _offload_and_prefetch(self, current_idx):
         """
         current_idx: the index being accessed
@@ -126,13 +125,12 @@ class All2AllCache:
                         self._try_prefetch_entry(idx)
                     else:
                         self._try_offload_entry(idx)
-                
-    
+
     def clear(self):
         self.cache = [None] * self.capacity
 
+    @CudaProfiler.prof_func('cache.put')
     def put(self, key, value):
-
         assert isinstance(key, int) and len(value) == self.val_len
         if value is not None:
             """
@@ -142,27 +140,29 @@ class All2AllCache:
             assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor)
             
         if self.auto_gc:
-            self.gc()
+            self._gc()
         self.cache[key] = value
         """
         NOTE: 
         Nothing to do regarding offloading and prefetching here.
         We cannot instantly offload the recv_buf since the all2all is still in progress
         """
-
+    
+    @CudaProfiler.prof_func('cache.get')
     def get(self, key):
         assert isinstance(key, int)
         if self.offload:
-            self._wait_entry_if_needed(key)
-            self._offload_and_prefetch(key)
+            with CudaProfiler.scope(f"cache.wait"):
+                self._wait_entry_if_needed(key)
+            with CudaProfiler.scope(f"cache.offload&prefetch"):
+                self._offload_and_prefetch(key)
         return self.cache[key]
 
     def contains(self, key):
         assert isinstance(key, int)
         return self.cache[key] is not None
 
-    
-    def gc(self):
+    def _gc(self):
         """
         If an async all2all operation is completed, clear the send buffer.
         """

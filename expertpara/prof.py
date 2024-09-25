@@ -5,7 +5,7 @@ class CudaProfiler:
         self.events = {}
         self.is_started = False
 
-    def start(self, name):
+    def start(self, name, stream=None):
         """
         Start recording time for a named section. Supports multiple starts.
         """
@@ -14,10 +14,13 @@ class CudaProfiler:
         assert len(self.events[name]['start']) == len(self.events[name]['end']), \
             f"Cannot start '{name}' as there are more starts than stops"
         start_event = torch.cuda.Event(enable_timing=True)
-        start_event.record()
+        if stream is not None:
+            start_event.record(stream)
+        else:
+            start_event.record()
         self.events[name]['start'].append(start_event)
 
-    def stop(self, name):
+    def stop(self, name, stream=None):
         """
         Stop recording time for a named section. Accumulates total time for multiple stops.
         """
@@ -25,7 +28,10 @@ class CudaProfiler:
         assert len(self.events[name]['start'])-1 == len(self.events[name]['end']), \
             f"Cannot stop '{name}' as there are more stops than starts"
         end_event = torch.cuda.Event(enable_timing=True)
-        end_event.record()
+        if stream is not None:
+            end_event.record(stream)
+        else:
+            end_event.record()
         self.events[name]['end'].append(end_event)
 
     def elapsed_time(self, name):
@@ -86,24 +92,26 @@ class CudaProfiler:
         return CudaProfiler._instance
     
     class ProfileContext:
-        def __init__(self, profiler, name):
+        def __init__(self, profiler, name, stream=None):
             self.profiler = profiler
             self.name = name
+            self.stream = stream
 
         def __enter__(self):
-            self.profiler.start(self.name)
+            self.profiler.start(self.name, self.stream)
 
         def __exit__(self, exc_type, exc_val, exc_tb):
-            self.profiler.stop(self.name)
+            self.profiler.stop(self.name, self.stream)
 
-    def range(self, name):
+    def scope(name, stream=None):
         """
         Create a context manager for profiling a block of code.
         Usage:
-        with CudaProfiler.prof().range('name'):
+        with CudaProfiler.scope('name'):
             # Code to profile
         """
-        return self.ProfileContext(self, name)
+        prof = CudaProfiler.prof()
+        return prof.ProfileContext(prof, name, stream)
     
     @staticmethod
     def prof_func(name):

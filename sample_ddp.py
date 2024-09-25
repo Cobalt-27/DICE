@@ -53,7 +53,7 @@ def main(args):
     """
     from models import set_ep_async
     set_ep_async(args.diep)
-    
+
     torch.backends.cuda.matmul.allow_tf32 = args.tf32  # True: fast but may lead to some small numerical differences
     assert torch.cuda.is_available(), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
     torch.set_grad_enabled(False)
@@ -116,7 +116,7 @@ def main(args):
     # ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
     # folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
     #               f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
-    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}-" \
+    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
                   f"-seed-{args.global_seed}-diep-{args.diep}-gc-{args.auto_gc}-offload-{args.offload}-prefetch-{args.cache_prefetch}{'' if args.extra_name is None else f'-{args.extra_name}'}"
     sample_folder_dir = os.path.join(args.sample_dir, folder_name)
     if args.extra_folder_name is not None:
@@ -147,8 +147,13 @@ def main(args):
     # Ensure the profile path exists
     if rank == 0:
         os.makedirs(os.path.dirname(prof_path), exist_ok=True)
-    
-    cache_init(cache_capacity=model.depth, auto_gc=args.auto_gc, offload=args.offload, prefetch_size=args.cache_prefetch)
+
+    cache_init(
+        cache_capacity=model.depth,
+        auto_gc=args.auto_gc,
+        offload=args.offload,
+        prefetch_size=args.cache_prefetch,
+    )
     for _ in pbar:
         # Sample images:
         cache_clear()
@@ -186,7 +191,6 @@ def main(args):
             CudaProfiler.prof().stop('total')
             mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
             prof_lines.append(mem_usage_line)
-            print(mem_usage_line)
             samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
@@ -200,15 +204,14 @@ def main(args):
             index = i * dist.get_world_size() + rank + total
             Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
         total += global_batch_size
-        
+
         if rank == 0:
             cache_line = f"Cache size: {cached_tensors_size() / (1024 * 1024):.2f} MB"
-            print(cache_line)
             prof_lines.append(cache_line)
             prof_lines+=analyse_prof(CudaProfiler.prof())
             with open(prof_path, "a") as f:
-                f.write(cache_line + "\n")
                 f.writelines([line + "\n" for line in prof_lines])
+            print("\n".join(prof_lines))
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
@@ -245,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
-    parser.add_argument("--cache-prefetch", type=int, default=0, help="prefetch size for cache offloading")
+    parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
     
     args = parser.parse_args()
     main(args)

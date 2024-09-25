@@ -36,11 +36,11 @@ def setup_cache():
     offload = False
     prefetch_size = 0
     val_len = 3  # At least 3: handles, recv_buf, send_buf
-    cache = All2AllCache(capacity, auto_gc, offload, prefetch_size, val_len)
+    cache = All2AllCache(capacity=capacity, val_len=val_len, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size)
     return cache
 
 def test_cache_size():
-    cache = All2AllCache(10, False, False, 0, 3)
+    cache = All2AllCache(capacity=10,val_len=3, auto_gc=False, offload=False)
     # Clear caches before starting
     # Test 1: Check cache size when caches are empty
     assert cache.tensors_size() == 0, "Cache size should be 0 when empty."
@@ -103,7 +103,7 @@ def test_gc_behavior():
     offload = False
     prefetch_size = 0
     val_len = 3
-    cache = All2AllCache(capacity, auto_gc, offload, prefetch_size, val_len)
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
 
     # Create sample tensors
     tensor = torch.randn(10, 10, device='cuda')
@@ -132,7 +132,7 @@ def test_offloading_behavior():
     offload = True
     prefetch_size = 0
     val_len = 3
-    cache = All2AllCache(capacity, auto_gc, offload, prefetch_size, val_len)
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
 
     # Create sample tensors
     tensor1 = torch.randn(10, 10, device='cuda')
@@ -171,7 +171,7 @@ def test_random_operations():
     ]
 
     for setting in settings:
-        cache = All2AllCache(capacity, setting['auto_gc'], setting['offload'], setting['prefetch_size'], val_len)
+        cache = All2AllCache(capacity=capacity, auto_gc=setting['auto_gc'], offload=setting['offload'], prefetch_size=setting['prefetch_size'], val_len=val_len)
         sim_cache = [None] * capacity  # Simulated simple cache
 
         for _ in range(50):  # Perform 50 random operations
@@ -208,7 +208,7 @@ def test_offloading_async_behavior():
     offload = True
     prefetch_size = 2
     val_len = 3
-    cache = All2AllCache(capacity, auto_gc, offload, prefetch_size, val_len)
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
     sim_cache = [None] * capacity
 
     # Initialize cache entries
