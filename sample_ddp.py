@@ -145,7 +145,7 @@ def main(args):
     if rank == 0 and os.path.exists(prof_path):
         os.remove(prof_path)
     
-    cache_init(cache_capacity=model.depth, auto_gc=args.auto_gc)
+    cache_init(cache_capacity=model.depth, auto_gc=args.auto_gc, offload=args.offload, prefetch_size=args.cache_prefetch)
     for _ in pbar:
         # Sample inputs:
         
@@ -232,6 +232,8 @@ if __name__ == "__main__":
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
     parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
+    parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
+    parser.add_argument("--cache-prefetch", type=int, default=0, help="prefetch size for cache offloading")
     parser.add_argument("--extra-folder-name",type=str,default=None)
     parser.add_argument("--extra-name",type=str,default=None)
     args = parser.parse_args()

@@ -15,7 +15,8 @@ num_sample_steps="500"
 image_size="256"
 cfg_scale="1.5"
 fid_samples="256"
-per_proc_batch_size="64"
+per_proc_batch_size="2"
+cache_prefetch="2"
 
 CUDA_VISIBLE_DEVICES=0,1
 
@@ -32,3 +33,4 @@ torchrun --nproc_per_node 2 sample_ddp.py \
 --tf32 \
 --diep \
 --auto-gc \
+--cache-prefetch $cache_prefetch \

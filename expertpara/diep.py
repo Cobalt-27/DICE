@@ -36,10 +36,24 @@ def cached_tensors_size():
     """
     return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
 
-def cache_init(cache_capacity, auto_gc = False):
+
+def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=0):
     global _diep_cache_dispatch, _diep_cache_combine
-    _diep_cache_dispatch = All2AllCache(cache_capacity, auto_gc, _CACHE_DISPATCH_VAL_LEN)
-    _diep_cache_combine = All2AllCache(cache_capacity, auto_gc, _CACHE_COMBINE_VAL_LEN)
+    _diep_cache_dispatch = All2AllCache(
+        capacity=cache_capacity,
+        auto_gc=auto_gc,
+        prefetch_size=prefetch_size,
+        offload=offload,
+        val_len=_CACHE_DISPATCH_VAL_LEN,
+    )
+    _diep_cache_combine = All2AllCache(
+        capacity=cache_capacity,
+        auto_gc=auto_gc,
+        prefetch_size=prefetch_size,
+        offload=offload,
+        val_len=_CACHE_COMBINE_VAL_LEN,
+    )
+
 
 def cache_clear():
     _diep_cache_dispatch.clear()
