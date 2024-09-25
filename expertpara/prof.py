@@ -1,5 +1,5 @@
 import torch
-
+import functools
 class CudaProfiler:
     def __init__(self):
         self.events = {}
@@ -84,6 +84,44 @@ class CudaProfiler:
         if CudaProfiler._instance is None:
             CudaProfiler._instance = CudaProfiler()
         return CudaProfiler._instance
+    
+    class ProfileContext:
+        def __init__(self, profiler, name):
+            self.profiler = profiler
+            self.name = name
+
+        def __enter__(self):
+            self.profiler.start(self.name)
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.profiler.stop(self.name)
+
+    def range(self, name):
+        """
+        Create a context manager for profiling a block of code.
+        Usage:
+        with CudaProfiler.prof().range('name'):
+            # Code to profile
+        """
+        return self.ProfileContext(self, name)
+    
+    @staticmethod
+    def prof_func(name):
+        """
+        Decorator to profile a function using the CudaProfiler.
+        Logs the total execution time of the function.
+        """
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                # Start profiling
+                CudaProfiler.prof().start(name)
+                result = func(*args, **kwargs)
+                # Stop profiling
+                CudaProfiler.prof().stop(name)
+                return result
+            return wrapper
+        return decorator
 
 """
 # Example usage
