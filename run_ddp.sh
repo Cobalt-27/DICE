@@ -33,4 +33,5 @@ torchrun --nproc_per_node 2 sample_ddp.py \
 --tf32 \
 --diep \
 --auto-gc \
+--offload \
 --cache-prefetch $cache_prefetch \

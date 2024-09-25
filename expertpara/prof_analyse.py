@@ -1,6 +1,6 @@
 from .prof import CudaProfiler
 import os
-def analyse_prof(profiler: CudaProfiler, path: str = None):
+def analyse_prof(profiler: CudaProfiler):
     """
     Analyse the professional data of the expert.
     """
@@ -17,10 +17,4 @@ def analyse_prof(profiler: CudaProfiler, path: str = None):
     
     output_lines.append(split)
     print(split)
-    
-    if path is not None:
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'a') as file:
-            for line in output_lines:
-                file.write(line + '\n')
+    return output_lines

@@ -116,11 +116,11 @@ def main(args):
     # ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
     # folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
     #               f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
-    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}-size-{args.image_size}-" \
-                  f"-seed-{args.global_seed}-diep-{args.diep}{'' if args.extra_name is None else f'-{args.extra_name}'}"
-    sample_folder_dir = f"{args.sample_dir}/{folder_name}"
+    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}-" \
+                  f"-seed-{args.global_seed}-diep-{args.diep}-gc-{args.auto_gc}-offload-{args.offload}-prefetch-{args.cache_prefetch}{'' if args.extra_name is None else f'-{args.extra_name}'}"
+    sample_folder_dir = os.path.join(args.sample_dir, folder_name)
     if args.extra_folder_name is not None:
-        sample_folder_dir = f"{args.sample_dir}/{args.extra_folder_name}/{folder_name}"
+        sample_folder_dir = os.path.join(args.sample_dir, args.extra_folder_name, folder_name)
     if rank == 0:
         os.makedirs(sample_folder_dir, exist_ok=True)
         print(f"Saving .png samples at {sample_folder_dir}")
@@ -141,18 +141,18 @@ def main(args):
     pbar = range(iterations)
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
-    prof_path = f"{sample_folder_dir}/prof.txt"
+    prof_path = os.path.join(sample_folder_dir, "prof.txt")
     if rank == 0 and os.path.exists(prof_path):
         os.remove(prof_path)
+    # Ensure the profile path exists
+    if rank == 0:
+        os.makedirs(os.path.dirname(prof_path), exist_ok=True)
     
     cache_init(cache_capacity=model.depth, auto_gc=args.auto_gc, offload=args.offload, prefetch_size=args.cache_prefetch)
     for _ in pbar:
-        # Sample inputs:
-        
-
         # Sample images:
         cache_clear()
-        
+        prof_lines=[]
         if dtype == torch.float16: 
             # use rf
             with torch.autocast(device_type='cuda'):
@@ -184,6 +184,9 @@ def main(args):
                 sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
             )
             CudaProfiler.prof().stop('total')
+            mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
+            prof_lines.append(mem_usage_line)
+            print(mem_usage_line)
             samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
@@ -199,8 +202,13 @@ def main(args):
         total += global_batch_size
         
         if rank == 0:
-            print(f"Cache size: {cached_tensors_size() / (1024 * 1024):.2f} MB")
-            analyse_prof(CudaProfiler.prof(), prof_path)
+            cache_line = f"Cache size: {cached_tensors_size() / (1024 * 1024):.2f} MB"
+            print(cache_line)
+            prof_lines.append(cache_line)
+            prof_lines+=analyse_prof(CudaProfiler.prof())
+            with open(prof_path, "a") as f:
+                f.write(cache_line + "\n")
+                f.writelines([line + "\n" for line in prof_lines])
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
@@ -230,11 +238,14 @@ if __name__ == "__main__":
                         help="By default, use TF32 matmuls. This massively accelerates sampling on Ampere GPUs.")
     parser.add_argument("--ckpt", type=str, default=None,
                         help="Optional path to a DiT checkpoint (default: auto-download a pre-trained DiT-XL/2 model).")
+    parser.add_argument("--extra-folder-name",type=str,default=None)
+    parser.add_argument("--extra-name",type=str,default=None)
+    
+    # DiEP related
     parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=0, help="prefetch size for cache offloading")
-    parser.add_argument("--extra-folder-name",type=str,default=None)
-    parser.add_argument("--extra-name",type=str,default=None)
+    
     args = parser.parse_args()
     main(args)
