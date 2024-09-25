@@ -66,87 +66,71 @@ NUM_EXPERTS_PER_TOK = 2
 
 
 def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op):
-    try:
-        # Initialize the process group
-        if rank != 0:
-            time.sleep(.5)  # Wait for the rank 0 to initialize the process group
-        dist.init_process_group(backend='gloo', init_method=f'tcp://localhost:{port}/',
-                                world_size=world_size, rank=rank)
-        # Set the device to CPU
-        device = torch.device('cpu')
-        # Set the random seed for reproducibility
-        torch.manual_seed(seed) # all proc shall use the same seed for expert initialization
-        experts = []
-        for _ in range(num_total_experts):
-            linear = nn.Linear(hidden_size, hidden_size)
-            nn.init.uniform_(linear.weight, a=0.0, b=1.0)  # Initialize weights with random values
-            experts.append(linear)
+    # Initialize the process group
+    if rank != 0:
+        time.sleep(.5)  # Wait for the rank 0 to initialize the process group
+    dist.init_process_group(backend='gloo', init_method=f'tcp://localhost:{port}/',
+                            world_size=world_size, rank=rank)
+    # Set the device to CPU
+    device = torch.device('cpu')
+    # Set the random seed for reproducibility
+    torch.manual_seed(seed) # all proc shall use the same seed for expert initialization
+    experts = []
+    for _ in range(num_total_experts):
+        linear = nn.Linear(hidden_size, hidden_size)
+        nn.init.uniform_(linear.weight, a=0.0, b=1.0)  # Initialize weights with random values
+        experts.append(linear)
+    
+    torch.manual_seed(seed + rank) # each proc shall use a different seed for input
+    
+    # Run the _infer_grouped function
+    prev_out = []
+    cache_init(1)
+    for i in range(n_iter):
+        inp = torch.randn(n_tokens, hidden_size).to(device)
+        flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
+        flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)
+        expert_out = moe_infer_ep(
+            inp=inp,
+            experts=experts,
+            flat_expert_indices=flat_expert_indices,
+            flat_expert_weights=flat_expert_weights,
+            num_experts_per_tok=num_experts_per_tok,
+            async_op=async_op,
+            cache_key=0,
+        )
         
-        torch.manual_seed(seed + rank) # each proc shall use a different seed for input
+        single_node_out = moe_infer_single_node(
+            experts=experts,
+            num_experts_per_tok=num_experts_per_tok,
+            x=inp,
+            flat_expert_indices=flat_expert_indices,
+            flat_expert_weights=flat_expert_weights,
+        )
         
-        # Run the _infer_grouped function
-        prev_out = []
-        cache_init(1)
-        for i in range(n_iter):
-            inp = torch.randn(n_tokens, hidden_size).to(device)
-            flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
-            flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)
-            expert_out = moe_infer_ep(
-                inp=inp,
-                experts=experts,
-                flat_expert_indices=flat_expert_indices,
-                flat_expert_weights=flat_expert_weights,
-                num_experts_per_tok=num_experts_per_tok,
-                async_op=async_op,
-                cache_key=0,
-            )
-            
-            single_node_out = moe_infer_single_node(
-                experts=experts,
-                num_experts_per_tok=num_experts_per_tok,
-                x=inp,
-                flat_expert_indices=flat_expert_indices,
-                flat_expert_weights=flat_expert_weights,
-            )
-            
-            """
-            If async all2all, the output shall be the same as the previous two steps.
-            
-            """
-            if async_op:
-                if len(prev_out) == 0:
-                    ans = single_node_out
-                elif len(prev_out) == 1:
-                    ans = prev_out[0]
-                else:
-                    ans = prev_out[-2]
-            else:
+        """
+        If async all2all, the output shall be the same as the previous two steps.
+        
+        """
+        if async_op:
+            if len(prev_out) == 0:
                 ans = single_node_out
-            prev_out.append(single_node_out)
-            # Verify the output
-            assert torch.allclose(expert_out, ans, atol=1e-6), f"Rank {rank}: Test failed at iter {i}, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}"
-    except Exception as e:
-        dist.destroy_process_group()
-        raise e
-
-def wrapped_run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op, error_queue):
-    try:
-        run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op)
-    except Exception as e:
-        error_queue.put(e)
+            elif len(prev_out) == 1:
+                ans = prev_out[0]
+            else:
+                ans = prev_out[-2]
+        else:
+            ans = single_node_out
+        prev_out.append(single_node_out)
+        # Verify the output
+        assert torch.allclose(expert_out, ans, atol=1e-6), f"Rank {rank}: Test failed at iter {i}, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}"
 
 @pytest.mark.parametrize("seed,async_op", [(42, False), (42, True), (43, False), (43, True)])
 def test_infer(seed, async_op):
-    # seed = 42
-    # print(f"\nRunning test iteration {i+1} with seed {seed + i}...")
-    # print("Running sync test...")
-    mp.set_start_method('spawn', force=True) # must set, otherwise mp.Queue fails
-    error_queue = mp.Queue()
+    mp.set_start_method('spawn', force=True) # must set, otherwise pytest cannot output subprocess error
     mp.spawn(
-        wrapped_run_test,
-        args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed, async_op, error_queue),
+        run_test,
+        args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed, async_op),
         nprocs=WORLD_SIZE,
         join=True
     )
-    if not error_queue.empty():
-        raise error_queue.get()
