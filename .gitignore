@@ -2,3 +2,4 @@
 *.png
 __pycache__/
 samples/
+**/.pytest_cache/

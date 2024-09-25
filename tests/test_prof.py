@@ -1,6 +1,14 @@
 import torch
+import pytest
 from expertpara.prof import CudaProfiler
-
+import random
+# Set a global random seed for all tests
+@pytest.fixture(scope="session", autouse=True)
+def set_seed():
+    seed = 42  # Any number you prefer
+    random.seed(seed)
+    torch.manual_seed(seed)
+    
 def test_profiler_with_manual_and_profiler_events():
     profiler = CudaProfiler()
 
@@ -45,18 +53,13 @@ def test_profiler_with_manual_and_profiler_events():
     # Get profiler measured time for AB
     profiler_time_AB = profiler.elapsed_time('op_AB')
 
-    try:
-        # Validate the inequalities: A < AB < ABC
-        assert manual_time_A < profiler_time_AB, \
-            f"Failed: Manual time for A ({manual_time_A} ms) should be less than profiler time for AB ({profiler_time_AB} ms)"
-        assert profiler_time_AB < manual_time_ABC, \
-            f"Failed: Profiler time for AB ({profiler_time_AB} ms) should be less than manual time for ABC ({manual_time_ABC} ms)"
+    # Validate the inequalities: A < AB < ABC
+    assert manual_time_A < profiler_time_AB, \
+        f"Failed: Manual time for A ({manual_time_A} ms) should be less than profiler time for AB ({profiler_time_AB} ms)"
+    assert profiler_time_AB < manual_time_ABC, \
+        f"Failed: Profiler time for AB ({profiler_time_AB} ms) should be less than manual time for ABC ({manual_time_ABC} ms)"
 
-        print("Test 1 (A < AB < ABC) passed!")
-
-    except AssertionError as e:
-        print(str(e))
-
+    print("Test 1 (A < AB < ABC) passed!")
 
 def test_multiple_sections():
     profiler = CudaProfiler()
@@ -79,16 +82,11 @@ def test_multiple_sections():
     profiler_time_X = profiler.elapsed_time('op_X')
     profiler_time_Y = profiler.elapsed_time('op_Y')
 
-    try:
-        # Ensure both timings are greater than zero
-        assert profiler_time_X > 0, "Failed: Profiler time for X should be greater than 0"
-        assert profiler_time_Y > 0, "Failed: Profiler time for Y should be greater than 0"
+    # Ensure both timings are greater than zero
+    assert profiler_time_X > 0, "Failed: Profiler time for X should be greater than 0"
+    assert profiler_time_Y > 0, "Failed: Profiler time for Y should be greater than 0"
 
-        print("Test 2 (Multiple Sections) passed!")
-
-    except AssertionError as e:
-        print(str(e))
-
+    print("Test 2 (Multiple Sections) passed!")
 
 def test_overlapping_sections():
     profiler = CudaProfiler()
@@ -113,15 +111,11 @@ def test_overlapping_sections():
     profiler_time_P = profiler.elapsed_time('op_P')
     profiler_time_PQ = profiler.elapsed_time('op_PQ')
 
-    try:
-        # Ensure P < PQ, as PQ includes both P and Q
-        assert profiler_time_P < profiler_time_PQ, \
-            f"Failed: Profiler time for P ({profiler_time_P} ms) should be less than profiler time for PQ ({profiler_time_PQ} ms)"
+    # Ensure P < PQ, as PQ includes both P and Q
+    assert profiler_time_P < profiler_time_PQ, \
+        f"Failed: Profiler time for P ({profiler_time_P} ms) should be less than profiler time for PQ ({profiler_time_PQ} ms)"
 
-        print("Test 3 (Overlapping Sections) passed!")
-
-    except AssertionError as e:
-        print(str(e))
+    print("Test 3 (Overlapping Sections) passed!")
 
 
 def test_manual_sync():
@@ -142,15 +136,11 @@ def test_manual_sync():
     # Get elapsed time after syncing
     profiler_time_sync = profiler.elapsed_time('op_sync')
 
-    try:
-        # Ensure elapsed time is greater than zero
-        assert profiler_time_sync > 0, \
-            f"Failed: Profiler time after manual sync ({profiler_time_sync} ms) should be greater than 0"
+    # Ensure elapsed time is greater than zero
+    assert profiler_time_sync > 0, \
+        f"Failed: Profiler time after manual sync ({profiler_time_sync} ms) should be greater than 0"
 
-        print("Test 4 (Manual Sync) passed!")
-
-    except AssertionError as e:
-        print(str(e))
+    print("Test 4 (Manual Sync) passed!")
 
 def test_profiler_accuracy():
     profiler = CudaProfiler()
@@ -182,20 +172,10 @@ def test_profiler_accuracy():
     # Get profiler measured time
     profiler_time = profiler.elapsed_time('op_accuracy')
 
-    try:
-        # Ensure the profiler time is within 5% of the manual time
-        error_margin = 0.05 * manual_time
-        assert abs(profiler_time - manual_time) <= error_margin, \
-            f"Failed: Profiler time ({profiler_time} ms) should be within 5% of manual time ({manual_time} ms)"
 
-        print("Test 5 (Profiler Accuracy) passed!")
+    # Ensure the profiler time is within 5% of the manual time
+    error_margin = 0.05 * manual_time
+    assert abs(profiler_time - manual_time) <= error_margin, \
+        f"Failed: Profiler time ({profiler_time} ms) should be within 5% of manual time ({manual_time} ms)"
 
-    except AssertionError as e:
-        print(str(e))
-
-if __name__ == "__main__":
-    test_profiler_with_manual_and_profiler_events()
-    test_multiple_sections()
-    test_overlapping_sections()
-    test_manual_sync()
-    test_profiler_accuracy()
+    print("Test 5 (Profiler Accuracy) passed!")

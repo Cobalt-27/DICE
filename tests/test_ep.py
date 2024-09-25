@@ -7,6 +7,7 @@ from expertpara.diep import cache_init
 import random
 import socket
 import time
+import pytest
 
 """
 NOTE
@@ -83,10 +84,7 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
         
         torch.manual_seed(seed + rank) # each proc shall use a different seed for input
         
-        # experts = [nn.Identity() for _ in range(num_total_experts)]
-        
         # Run the _infer_grouped function
-        test_passed = True
         prev_out = []
         cache_init(1)
         for i in range(n_iter):
@@ -126,34 +124,29 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
                 ans = single_node_out
             prev_out.append(single_node_out)
             # Verify the output
-            if not torch.allclose(expert_out, ans, atol=1e-6):
-                test_passed = False
-                print(f"Rank {rank}: Test failed at iter {i}, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}")
-            
-        if test_passed:
-            print(f"Rank {rank}: Test passed.")
-    finally:
-        # Clean up
+            assert torch.allclose(expert_out, ans, atol=1e-6), f"Rank {rank}: Test failed at iter {i}, relative error: {torch.norm(expert_out - single_node_out) / torch.norm(single_node_out)}"
+    except Exception as e:
         dist.destroy_process_group()
+        raise e
 
-def test_infer(repeats=3):
-    seed = 42
-    for i in range(repeats):
-        print(f"\nRunning test iteration {i+1} with seed {seed + i}...")
-        print("Running sync test...")
-        mp.spawn(
-            run_test,
-            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed + i, False),
-            nprocs=WORLD_SIZE,
-            join=True
-        )
-        print(f"Running async test...")
-        mp.spawn(
-            run_test,
-            args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed + i, True),
-            nprocs=WORLD_SIZE,
-            join=True
-        )
+def wrapped_run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op, error_queue):
+    try:
+        run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens, n_iter, hidden_size, port, seed, async_op)
+    except Exception as e:
+        error_queue.put(e)
 
-if __name__ == '__main__':
-    test_infer(repeats=1)
+@pytest.mark.parametrize("seed,async_op", [(42, False), (42, True), (43, False), (43, True)])
+def test_infer(seed, async_op):
+    # seed = 42
+    # print(f"\nRunning test iteration {i+1} with seed {seed + i}...")
+    # print("Running sync test...")
+    mp.set_start_method('spawn', force=True) # must set, otherwise mp.Queue fails
+    error_queue = mp.Queue()
+    mp.spawn(
+        wrapped_run_test,
+        args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed, async_op, error_queue),
+        nprocs=WORLD_SIZE,
+        join=True
+    )
+    if not error_queue.empty():
+        raise error_queue.get()

@@ -5,6 +5,7 @@ import torch.multiprocessing as mp
 from expertpara.etrim import trim_module_list, trim_state_dict, DummyExpert, _needed_expert_indices
 from .test_ep import find_port
 import time
+import pytest
 
 def run_trim_test(rank, world_size, num_total_experts, port):
     # Initialize the process group
@@ -39,18 +40,20 @@ def run_trim_test(rank, world_size, num_total_experts, port):
         expert_idx = int(key.split('.')[4])  # Extract the expert index from the key
         assert expert_idx in needed_experts, f"Expert {expert_idx} is in state_dict but shouldn't be"
 
-    print(f"Rank {rank}: Trimming test passed.")
-
     dist.destroy_process_group()
+    
 
+def warpped_run_trim_test(rank, world_size, num_total_experts, port, error_queue):
+    try:
+        run_trim_test(rank, world_size, num_total_experts, port)
+    except Exception as e:
+        error_queue.put(e)
 
-def test_expert_trimming(num_total_experts, world_size):
-    mp.spawn(run_trim_test, args=(world_size, num_total_experts, find_port()), nprocs=world_size, join=True)
-
-
-if __name__ == "__main__":
-    print("Running expert trimming tests...")
-    print("Test 1: Trim 8 experts with 4 workers")
-    test_expert_trimming(num_total_experts=8, world_size=4)
-    print("Test 2: Trim 4 experts with 2 workers")
-    test_expert_trimming(num_total_experts=4, world_size=2)
+@pytest.mark.parametrize("num_total_experts,world_size", [(8, 4), (4, 2), (16, 4)])
+def test_trimming(num_total_experts, world_size):
+    mp.set_start_method('spawn', force=True) # must set, otherwise mp.Queue fails
+    error_queue = mp.Queue()
+    mp.spawn(warpped_run_trim_test, args=(world_size, num_total_experts, find_port(),error_queue), nprocs=world_size, join=True)
+    # check queue, fail test if error
+    if not error_queue.empty():
+        raise error_queue.get()
