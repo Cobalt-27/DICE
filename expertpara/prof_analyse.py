@@ -9,9 +9,9 @@ def analyse_prof(profiler: CudaProfiler):
     split = "-" * 20
     output_lines = []
     output_lines.append(split)
-    for key, time in times.items():
+    # sort by time
+    for key, time in sorted(times.items(), key=lambda item: item[1], reverse=True):
         line = f"[{key}] {time/1000:.2f}s {time/total_time:.2%}"
         output_lines.append(line)
-    
     output_lines.append(split)
     return output_lines

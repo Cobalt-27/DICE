@@ -148,11 +148,14 @@ def main(args):
     if rank == 0:
         os.makedirs(os.path.dirname(prof_path), exist_ok=True)
 
+    strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
+    
     cache_init(
         cache_capacity=model.depth,
         auto_gc=args.auto_gc,
         offload=args.offload,
         prefetch_size=args.cache_prefetch,
+        offload_mask=strided_offload_mask(2),
     )
     for _ in pbar:
         # Sample images:

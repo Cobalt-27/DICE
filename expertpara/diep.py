@@ -37,7 +37,7 @@ def cached_tensors_size():
     return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
 
 
-def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None):
+def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, offload_mask=None):
     if not offload:
         assert prefetch_size == None
     global _diep_cache_dispatch, _diep_cache_combine
@@ -47,6 +47,7 @@ def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None)
         prefetch_size=prefetch_size,
         offload=offload,
         val_len=_CACHE_DISPATCH_VAL_LEN,
+        offload_mask=offload_mask,
     )
     _diep_cache_combine = All2AllCache(
         capacity=cache_capacity,
@@ -54,6 +55,7 @@ def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None)
         prefetch_size=prefetch_size,
         offload=offload,
         val_len=_CACHE_COMBINE_VAL_LEN,
+        offload_mask=offload_mask,
     )
 
 

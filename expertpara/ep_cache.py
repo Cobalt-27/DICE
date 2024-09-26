@@ -62,13 +62,14 @@ def is_completed(handles):
     return True
 
 class All2AllCache:
-    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None):
+    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None, offload_mask = None):
         """
         capacity: the number of entries in the cache
         auto_gc: automatically clear send buffer after all2all completes
         prefetch_size: the size of the recv_buf to keep in GPU, 0 for no prefetch
         val_len: the length of the value tuple
-        """
+        offload: whether to offload each recv_buf to CPU
+        """ 
         self.capacity = capacity
         self.auto_gc = auto_gc
         self.cache = [None] * capacity
@@ -77,7 +78,9 @@ class All2AllCache:
         )
         self.offload = offload
         self.prefetch_size = prefetch_size
-
+        self.offload_mask = offload_mask if offload_mask is not None else [True] * capacity
+        if self.offload:
+            assert prefetch_size is not None
     """
     NOTE: the second item in the value tuple is the recv_buf
     """
@@ -91,8 +94,7 @@ class All2AllCache:
         offloaded = AsyncTensorOffloading(recv_buf)
         value[1] = offloaded
         self.cache[idx] = tuple(value)
-        
-    
+
     def _try_prefetch_entry(self, idx):
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
@@ -103,8 +105,8 @@ class All2AllCache:
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
-            recv_buf.wait()
-            recv_buf = recv_buf.gpu_tensor
+            recv_buf = recv_buf.wait()
+             
         value[RECV_BUF_IDX] = recv_buf
         self.cache[idx] = tuple(value)
 
@@ -119,7 +121,7 @@ class All2AllCache:
         """
         for i in range(1,self.capacity): # skip the current_idx, since it's being accessed
             idx = (current_idx + i) % self.capacity
-            if self.cache[idx] is not None:
+            if self.cache[idx] is not None and self.offload_mask[idx]:
                 if is_completed(self.cache[idx][HANDLES_IDX]):
                     if i <= self.prefetch_size:
                         self._try_prefetch_entry(idx)
@@ -129,7 +131,7 @@ class All2AllCache:
     def clear(self):
         self.cache = [None] * self.capacity
 
-    @CudaProfiler.prof_func('cache.put')
+    # @CudaProfiler.prof_func('cache.put')
     def put(self, key, value):
         assert isinstance(key, int) and len(value) == self.val_len
         if value is not None:
@@ -138,7 +140,7 @@ class All2AllCache:
             """
             assert value[HANDLES_IDX] is None or isinstance(value[HANDLES_IDX], list)
             assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor)
-            
+
         if self.auto_gc:
             self._gc()
         self.cache[key] = value
@@ -147,15 +149,16 @@ class All2AllCache:
         Nothing to do regarding offloading and prefetching here.
         We cannot instantly offload the recv_buf since the all2all is still in progress
         """
-    
-    @CudaProfiler.prof_func('cache.get')
+
+    # @CudaProfiler.prof_func('cache.get')
     def get(self, key):
         assert isinstance(key, int)
-        if self.offload:
+        if self.offload and self.offload_mask[key]:
             with CudaProfiler.scope(f"cache.wait"):
                 self._wait_entry_if_needed(key)
             with CudaProfiler.scope(f"cache.offload&prefetch"):
                 self._offload_and_prefetch(key)
+        assert isinstance(self.cache[key][RECV_BUF_IDX], torch.Tensor)
         return self.cache[key]
 
     def contains(self, key):
@@ -183,9 +186,16 @@ class All2AllCache:
             [
                 sum(
                     [
-                        x.element_size() * x.numel()
+                        (
+                            x.element_size() * x.numel()
+                            if isinstance(x, torch.Tensor)
+                            else (
+                                x.gpu_mem_size()
+                                if isinstance(x, AsyncTensorOffloading)
+                                else 0
+                            )
+                        )
                         for x in v
-                        if isinstance(x, torch.Tensor)
                     ]
                 )
                 for v in self.cache

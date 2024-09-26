@@ -25,7 +25,8 @@ def make_dummy_handle(completed=True):
 
 def arbitrary_tensor_op():
     # Arbitrary tensor operation
-    tensor = torch.randn(10, 10, device='cuda')
+    size = random.randint(1, 1000)
+    tensor = torch.randn(size, size, device='cuda')
     result = torch.matmul(tensor, tensor)
 
 @pytest.fixture
@@ -158,46 +159,51 @@ def test_offloading_behavior():
     recv_buf1 = entry1[1]
     assert isinstance(recv_buf1, AsyncTensorOffloading)
 
-def test_random_operations():
+import pytest
+
+# Define settings as pytest parameters
+@pytest.mark.parametrize("auto_gc, offload, prefetch_size", [
+    (False, False, None),
+    (True, False, None),
+    (True, True, 0),
+    (True, True, 1),
+    (True, True, 2),
+    (False, True, 0),
+    (False, True, 1),
+])
+def test_random_operations(auto_gc, offload, prefetch_size):
     import random
 
-    capacity = 5
+    capacity = 100
     val_len = 3
-    # Test different cache settings
-    settings = [
-        {'auto_gc': True, 'offload': False, 'prefetch_size': 0},
-        {'auto_gc': False, 'offload': True, 'prefetch_size': 1},
-        {'auto_gc': True, 'offload': True, 'prefetch_size': 2},
-    ]
 
-    for setting in settings:
-        cache = All2AllCache(capacity=capacity, auto_gc=setting['auto_gc'], offload=setting['offload'], prefetch_size=setting['prefetch_size'], val_len=val_len)
-        sim_cache = [None] * capacity  # Simulated simple cache
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
+    sim_cache = [None] * capacity  # Simulated simple cache
 
-        for _ in range(50):  # Perform 50 random operations
-            operation = random.choice(['put', 'get'])
-            idx = random.randint(0, capacity - 1)
-            arbitrary_tensor_op()
-            if operation == 'put':
-                # Create tensors
-                tensor = torch.randn(10, 10, device='cuda')
-                send_buf = torch.randn(5, 5, device='cuda')
-                handles = [make_dummy_handle(completed=random.choice([True, False]))]
+    for _ in range(1000):
+        operation = random.choice(['put', 'get'])
+        idx = random.randint(0, capacity - 1)
+        arbitrary_tensor_op()
+        if operation == 'put':
+            # Create tensors
+            tensor = torch.randn(10, 10, device='cuda')
+            send_buf = torch.randn(5, 5, device='cuda')
+            handles = [make_dummy_handle(completed=random.choice([True, False]))]
 
-                # Clone tensors to prevent cross-contamination
-                cache.put(idx, (handles, tensor.clone(), send_buf.clone()))
-                sim_cache[idx] = (handles, tensor.clone(), send_buf.clone())
+            # Clone tensors to prevent cross-contamination
+            cache.put(idx, (handles, tensor.clone(), send_buf.clone()))
+            sim_cache[idx] = (handles, tensor.clone(), send_buf.clone())
 
-            elif operation == 'get':
-                sim_entry = sim_cache[idx]                
-                if sim_entry is not None:
-                    cache_entry = cache.get(idx)
-                    # Handle offloading
-                    recv_buf_cache = cache_entry[1]
-                    assert not isinstance(recv_buf_cache, AsyncTensorOffloading)
-                    arbitrary_tensor_op()
-                    # Compare results
-                    assert torch.equal(recv_buf_cache, sim_entry[1])
+        elif operation == 'get':
+            sim_entry = sim_cache[idx]                
+            if sim_entry is not None:
+                cache_entry = cache.get(idx)
+                # Handle offloading
+                recv_buf_cache = cache_entry[1]
+                assert not isinstance(recv_buf_cache, AsyncTensorOffloading)
+                arbitrary_tensor_op()
+                # Compare results
+                assert torch.equal(recv_buf_cache, sim_entry[1])
 
 def test_offloading_async_behavior():
     import random
