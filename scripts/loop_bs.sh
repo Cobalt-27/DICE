@@ -4,16 +4,21 @@
 # screen -L -Logfile my_logfile.log
 
 echo "Select model:"
-echo "1) DiT-B/2"
-echo "2) DiT-S/2"
-read -p "Enter choice [1 or 2]: " choice
+echo "1) DiT-XL/2"
+echo "2) DiT-B/2"
+echo "3) DiT-S/2"
+read -p "Enter choice [1-3]: " choice
 
 case $choice in
     1)
+        model="DiT-XL/2"
+        ckpt_path="/mnt/dit_moe_xl_8E2A.pt"
+        ;;
+    2)
         model="DiT-B/2"
         ckpt_path="/mnt/dit_moe_b_8E2A.pt"
         ;;
-    2)
+    3)
         model="DiT-S/2"
         ckpt_path="/mnt/dit_moe_s_8E2A.pt"
         ;;
@@ -33,23 +38,37 @@ export CUDA_VISIBLE_DEVICES=$cuda_devices
 read -p "Enter world size (default is 2): " world_size
 world_size=${world_size:-2}
 
-num_experts="8"
+# Loop over batch sizes, doubling each time
+read -p "Enter start batch size (default is 4): " start_batch_size
+start_batch_size=${start_batch_size:-4}
+
+read -p "Enter end batch size (default is 128): " end_batch_size
+end_batch_size=${end_batch_size:-128}
+
+read -p "Enter experiment folder name: " experiment_folder
+
+
+num_experts=8
 vae_path="/mnt/vae"
-num_sample_steps="500"
-image_size="256"
-cfg_scale="1.5"
-folder_name="loop-bs-${model//\//-}-GPUx${world_size}"
-cache_prefetch="2"
+
+num_sample_steps=500
+image_size=256
+cfg_scale=2.0
+folder_name="loop-bs-${model//\//-}-range-${start_batch_size}-to-${end_batch_size}-GPUx${world_size}-${experiment_folder}"
+cache_prefetch=2
+cache_stride=2
 
 
-# Loop over batch sizes from 1 to 64, doubling each time
-for per_proc_batch_size in 4 8 16 32 64 128; do
-    echo "Running test with per_proc_batch_size: $per_proc_batch_size"
+
+batch_size=$start_batch_size
+
+while [ $batch_size -le $end_batch_size ]; do
+    echo "Running test with per_proc_batch_size: $batch_size"
     
-    fid_samples=$((per_proc_batch_size * 4))
+    fid_samples=$((batch_size * 4)) # 4 iters
 
     torchrun --nproc_per_node $world_size sample_ddp.py \
-    --per-proc-batch-size $per_proc_batch_size \
+    --per-proc-batch-size $batch_size \
     --model $model \
     --vae-path $vae_path \
     --ckpt $ckpt_path \
@@ -64,9 +83,10 @@ for per_proc_batch_size in 4 8 16 32 64 128; do
     --auto-gc \
     --offload \
     --cache-prefetch $cache_prefetch \
+    --cache-stride $cache_stride \
 
     torchrun --nproc_per_node $world_size sample_ddp.py \
-    --per-proc-batch-size $per_proc_batch_size \
+    --per-proc-batch-size $batch_size \
     --model $model \
     --vae-path $vae_path \
     --ckpt $ckpt_path \
@@ -78,5 +98,8 @@ for per_proc_batch_size in 4 8 16 32 64 128; do
     --extra-folder-name $folder_name \
     --tf32 \
     
-    echo "Test completed for per_proc_batch_size: $per_proc_batch_size"
+    echo "Test completed for per_proc_batch_size: $batch_size"
+    
+    batch_size=$((batch_size * 2))
+done
 done
