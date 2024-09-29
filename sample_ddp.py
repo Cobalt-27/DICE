@@ -28,6 +28,7 @@ from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
 from expertpara.diep import cache_clear, cached_tensors_size, cache_init
+import time
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):
@@ -112,7 +113,7 @@ def main(args):
     using_cfg = args.cfg_scale > 1.0
 
     # Create folder to save samples:
-    model_string_name = args.model.replace("/", "-")
+    model_string_name = args.model.split("/")[0]
     # ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
     # folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
     #               f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
@@ -155,8 +156,9 @@ def main(args):
         auto_gc=args.auto_gc,
         offload=args.offload,
         prefetch_size=args.cache_prefetch,
-        offload_mask=strided_offload_mask(2),
+        offload_mask=strided_offload_mask(args.cache_stride),
     )
+    total_time = 0
     for _ in pbar:
         # Sample images:
         cache_clear()
@@ -187,11 +189,16 @@ def main(args):
             else:
                 model_kwargs = dict(y=y)
                 sample_fn = model.forward
+            torch.cuda.synchronize()
+            time_start = time.time()
             CudaProfiler.prof().start('total')
             samples = diffusion.p_sample_loop(
                 sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
             )
             CudaProfiler.prof().stop('total')
+            torch.cuda.synchronize()
+            time_end = time.time()
+            total_time += time_end - time_start
             mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
             prof_lines.append(mem_usage_line)
             samples = samples[:samples.shape[0] // n] # keep only one sample per batch
@@ -221,6 +228,7 @@ def main(args):
     if rank == 0:
         # XXX: no npz for now
         # create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
+        print(f"Measured sampling time: {total_time:.2f}s")
         print("Done.")
     dist.barrier()
     dist.destroy_process_group()
@@ -252,6 +260,6 @@ if __name__ == "__main__":
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
-    
+    parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
     args = parser.parse_args()
     main(args)

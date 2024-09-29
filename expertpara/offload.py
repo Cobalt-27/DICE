@@ -17,18 +17,14 @@ class AsyncTensorOffloading:
         """Asynchronously copy the tensor from GPU to CPU."""
         with CudaProfiler.scope('offload.to_cpu', stream=self.stream):
             self.main_stream = torch.cuda.current_stream()
+            can_start_offload_event = torch.cuda.Event()
+            can_start_offload_event.record(self.main_stream)
             with torch.cuda.stream(self.stream):
-                # torch.cuda.synchronize()
-                # self.main_stream.synchronize()
-                # self.stream.synchronize()
-                self.stream.wait_stream(self.main_stream)
+                self.stream.wait_event(can_start_offload_event)
                 # Allocate pinned CPU memory
                 self._cpu_tensor = torch.empty_like(tensor, device='cpu', pin_memory=True)
                 # Asynchronously copy data from GPU to pinned CPU memory
                 self._cpu_tensor.copy_(tensor, non_blocking=True)
-                # torch.cuda.synchronize()
-                # self.stream.synchronize()
-                # self.main_stream.synchronize()
                 self.offload_finish_event.record(self.stream)  # Record event for tracking
         """
         NOTE: IMPORTANT
@@ -37,6 +33,11 @@ class AsyncTensorOffloading:
         self._inp_tensor = tensor
         self._gpu_tensor = None # not yet copied back to GPU
 
+    def release_gpu_mem_if_possible(self):
+        if self.offload_finish_event.query():
+            # release the input tensor otherwise offloading saves no memory
+            self._inp_tensor = None
+    
     def async_prefetch(self):
         """Asynchronously copy the tensor from CPU to GPU."""
         

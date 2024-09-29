@@ -85,6 +85,12 @@ class All2AllCache:
     NOTE: the second item in the value tuple is the recv_buf
     """
 
+    def _try_release_entry_gpu_mem(self, idx):
+        value = list(self.cache[idx])
+        recv_buf = value[RECV_BUF_IDX]
+        if isinstance(recv_buf, AsyncTensorOffloading):
+            recv_buf.release_gpu_mem_if_possible()
+
     def _try_offload_entry(self, idx):
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
@@ -127,6 +133,7 @@ class All2AllCache:
                         self._try_prefetch_entry(idx)
                     else:
                         self._try_offload_entry(idx)
+                    self._try_release_entry_gpu_mem(idx)
 
     def clear(self):
         self.cache = [None] * self.capacity
