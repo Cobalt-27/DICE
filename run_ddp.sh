@@ -1,7 +1,5 @@
 #!/bin/bash
 
-world_size=${WORLD_SIZE:-2}
-
 echo "Select model:"
 echo "1) DiT-XL/2"
 echo "2) DiT-B/2"
@@ -31,7 +29,10 @@ vae_path="/mnt/vae"
 num_experts=8
 image_size=256
 
-read -p "Enter number of sampling steps (default 500): " num_sample_steps
+read -p "Enter world size (default 2): " world_size
+world_size=${world_size:-2}
+
+read -p "Enter number of sampling steps (invalid for XL&G, default 500): " num_sample_steps
 num_sample_steps=${num_sample_steps:-500}
 
 read -p "Enter CFG scale (default 1.5): " cfg_scale
@@ -39,6 +40,28 @@ cfg_scale=${cfg_scale:-1.5}
 
 read -p "Enter per-process batch size (default 4): " per_proc_batch_size
 per_proc_batch_size=${per_proc_batch_size:-4}
+
+# Initialize extra_args as an empty string
+extra_args=""
+
+# Ask the user if they want to include optional arguments
+read -p "Use --diep? (y/n, default n): " use_diep
+use_diep=${use_diep:-n}
+if [ "$use_diep" = "y" ]; then
+    extra_args+=" --diep"
+fi
+
+read -p "Use --auto-gc? (y/n, default n): " use_auto_gc
+use_auto_gc=${use_auto_gc:-n}
+if [ "$use_auto_gc" = "y" ]; then
+    extra_args+=" --auto-gc"
+fi
+
+read -p "Use --offload? (y/n, default n): " use_offload
+use_offload=${use_offload:-n}
+if [ "$use_offload" = "y" ]; then
+    extra_args+=" --offload"
+fi
 
 read -p "Enter cache prefetch (default 2): " cache_prefetch
 cache_prefetch=${cache_prefetch:-2}
@@ -64,8 +87,6 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --num-sampling-steps $num_sample_steps \
 --num-fid-samples $fid_samples \
 --tf32 \
---diep \
---auto-gc \
---offload \
 --cache-prefetch $cache_prefetch \
 --cache-stride $cache_stride \
+$extra_args

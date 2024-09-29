@@ -148,6 +148,14 @@ def main(args):
     # Ensure the profile path exists
     if rank == 0:
         os.makedirs(os.path.dirname(prof_path), exist_ok=True)
+    
+    if rank == 0:
+        args_path = os.path.join(sample_folder_dir, "args.txt")
+        with open(args_path, "w+") as f:
+            import json
+            args_dict = vars(args)
+            formatted_args = json.dumps(args_dict, indent=4)
+            f.write(formatted_args)
 
     strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
     
@@ -168,12 +176,11 @@ def main(args):
             with torch.autocast(device_type='cuda'):
                 STEPSIZE = 50
                 init_noise = torch.randn(n, model.in_channels, latent_size, latent_size, device=device) 
-                # conds = torch.tensor(class_labels, device=device)
                 conds = torch.randint(0, args.num_classes, (n,), device=device)
                 CudaProfiler.prof().start('total')
-                images = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = 7.0)
+                image = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
                 CudaProfiler.prof().stop('total')
-                samples = vae.decode(images[-1] / 0.18215).sample # only the last one is needed
+                samples = vae.decode(image / 0.18215).sample # only the last one is needed
                 samples = samples[:samples.shape[0] // n] # keep only one sample per batch
         else:
             z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
@@ -260,6 +267,6 @@ if __name__ == "__main__":
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
-    parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
+    parser.add_argument("--cache-stride", type=int, default=1, help="stride size for partial offloading")
     args = parser.parse_args()
     main(args)
