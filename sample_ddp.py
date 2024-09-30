@@ -221,9 +221,9 @@ def main(args):
         prof_lines.append(measured_total_time_line)
         
         if dtype == torch.float16:
-            samples = vae.decode(image / 0.18215).sample # only the last one is needed
             if args.trim_samples:
-                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
+                image = image[:image.shape[0] // n] # keep only one sample per batch
+            samples = vae.decode(image / 0.18215).sample # only the last one is needed
         else:
             if args.trim_samples:
                 samples = samples[:samples.shape[0] // n] # keep only one sample per batch

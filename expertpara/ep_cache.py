@@ -150,12 +150,15 @@ class All2AllCache:
 
         if self.auto_gc:
             self._gc()
+        """
+        NOTE:
+        Putting offload checks here because in cache warm-up iteration, we are only putting items.
+        Must trigger offloading here to ease the peak memory usage.
+        """
+        if self.offload and self.offload_mask[key]:
+            with CudaProfiler.scope(f"cache.offload&prefetch"):
+                self._offload_and_prefetch(key)
         self.cache[key] = value
-        """
-        NOTE: 
-        Nothing to do regarding offloading and prefetching here.
-        We cannot instantly offload the recv_buf since the all2all is still in progress
-        """
 
     # @CudaProfiler.prof_func('cache.get')
     def get(self, key):
@@ -163,8 +166,8 @@ class All2AllCache:
         if self.offload and self.offload_mask[key]:
             with CudaProfiler.scope(f"cache.wait"):
                 self._wait_entry_if_needed(key)
-            with CudaProfiler.scope(f"cache.offload&prefetch"):
-                self._offload_and_prefetch(key)
+            # with CudaProfiler.scope(f"cache.offload&prefetch"):
+            #     self._offload_and_prefetch(key)
         assert isinstance(self.cache[key][RECV_BUF_IDX], torch.Tensor)
         return self.cache[key]
 

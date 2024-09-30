@@ -66,4 +66,9 @@ class AsyncTensorOffloading:
         return self._gpu_tensor
     
     def gpu_mem_size(self):
-        return self._gpu_tensor.element_size() * self._gpu_tensor.nelement() if self._gpu_tensor is not None else 0
+        size = 0
+        if self._gpu_tensor is not None:
+            size = self._gpu_tensor.element_size() * self._gpu_tensor.nelement()
+        if self._inp_tensor is not None:
+            size += self._inp_tensor.element_size() * self._inp_tensor.nelement()
+        return size
