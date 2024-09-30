@@ -393,9 +393,12 @@ class DiTBlock(nn.Module):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         if use_flash_attn: 
+            raise RuntimeError("FlashAttention is not supported in this version.")
             self.attn = FlashSelfMHAModified(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=True)
         else:
-            self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+            # self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+            from seqpara.sp_fwd import AttentionSP
+            self.attn = AttentionSP(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
@@ -538,8 +541,12 @@ class DiT(nn.Module):
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
+        from seqpara.sp_fwd import sp_scatter, sp_allgather, sp_broadcast
+        x = sp_scatter(x)
+        c = sp_broadcast(c)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
+        x = sp_allgather(x)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
