@@ -30,14 +30,7 @@ except Exception as e:
     print(f'flash_attn import failed: {e}')
 
 
-
 # selected_ids_list = []
-
-def set_ep_async(val):
-    global ep_async_op
-    ep_async_op = val
-
-ep_async_op = False
 
 
 def modulate(x, shift, scale):
@@ -185,8 +178,6 @@ class MoEGate(nn.Module):
         return topk_idx, topk_weight, aux_loss
 
 
-
-
 class AddAuxiliaryLoss(torch.autograd.Function):
     """
     The trick function of adding auxiliary (aux) loss, 
@@ -205,7 +196,6 @@ class AddAuxiliaryLoss(torch.autograd.Function):
         if ctx.required_aux_loss:
             grad_loss = torch.ones(1, dtype=ctx.dtype, device=grad_output.device)
         return grad_output, grad_loss
-
 
 
 class MoeMLP(nn.Module):
@@ -248,7 +238,7 @@ class SparseMoeBlock(nn.Module):
     """
     A mixed expert module containing shared experts.
     """
-    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None):
+    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, ep=True, ep_async_op=None):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
@@ -256,7 +246,8 @@ class SparseMoeBlock(nn.Module):
         """
         NOTE: trim unused experts, for ep only
         """
-        self.experts = trim_module_list(self.experts, num_experts)
+        if ep: # trim unused experts if expertpara is enabled
+            self.experts = trim_module_list(self.experts, num_experts)
         
         self.gate = MoEGate(embed_dim=embed_dim, num_experts=num_experts, num_experts_per_tok=num_experts_per_tok)
         self.n_shared_experts = 2
@@ -265,7 +256,8 @@ class SparseMoeBlock(nn.Module):
             intermediate_size =  embed_dim * self.n_shared_experts
             self.shared_experts = MoeMLP(hidden_size = embed_dim, intermediate_size = intermediate_size, pretraining_tp=pretraining_tp)
         self.cache_key = layer_idx
-        
+        self.ep_async_op = ep_async_op
+        self.ep = ep
         
     def forward(self, hidden_states):
         identity = hidden_states
@@ -286,17 +278,19 @@ class SparseMoeBlock(nn.Module):
             y =  y.view(*orig_shape)
             y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
-            # y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
-            from expertpara.ep_fwd import moe_infer_ep
-            y = moe_infer_ep(
-                inp=hidden_states,
-                experts=self.experts,
-                flat_expert_indices=flat_topk_idx,
-                flat_expert_weights=topk_weight.view(-1, 1),
-                num_experts_per_tok=self.num_experts_per_tok,
-                async_op=ep_async_op,
-                cache_key=self.cache_key,
-            ).view(*orig_shape)
+            if not self.ep:
+                y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
+            else:
+                from expertpara.ep_fwd import moe_infer_ep
+                y = moe_infer_ep(
+                    inp=hidden_states,
+                    experts=self.experts,
+                    flat_expert_indices=flat_topk_idx,
+                    flat_expert_weights=topk_weight.view(-1, 1),
+                    num_experts_per_tok=self.num_experts_per_tok,
+                    async_op=self.ep_async_op,
+                    cache_key=self.cache_key,
+                ).view(*orig_shape)
         if self.n_shared_experts is not None:
             y = y + self.shared_experts(identity)
         return y
@@ -304,7 +298,7 @@ class SparseMoeBlock(nn.Module):
 
     @torch.no_grad()
     def moe_infer(self, x, flat_expert_indices, flat_expert_weights):
-        raise RuntimeError("Should use EP")
+        assert not self.ep and self.ep_async_op is None
         expert_cache = torch.zeros_like(x) 
         idxs = flat_expert_indices.argsort()
         tokens_per_expert = flat_expert_indices.bincount().cpu().numpy().cumsum(0)
@@ -340,8 +334,6 @@ class RMSNorm(nn.Module):
         variance = hidden_states.pow(2).mean(-1, keepdim=True)
         hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
         return self.weight * hidden_states.to(input_dtype)
-
-
 
 
 #################################################################################
@@ -413,7 +405,7 @@ class DiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4,
         num_experts=8, num_experts_per_tok=2, pretraining_tp=2, 
-        use_flash_attn=False, layer_idx=None, **block_kwargs
+        use_flash_attn=False, layer_idx=None, ep=True, ep_async_op=None,**block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -424,8 +416,17 @@ class DiTBlock(nn.Module):
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
-        # self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0) 
-        self.moe = SparseMoeBlock(hidden_size, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp, layer_idx=layer_idx)
+        # self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
+        self.moe = SparseMoeBlock(
+            hidden_size,
+            mlp_ratio,
+            num_experts,
+            num_experts_per_tok,
+            pretraining_tp,
+            layer_idx=layer_idx,
+            ep=ep,
+            ep_async_op=ep_async_op,
+        )
 
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
@@ -478,6 +479,8 @@ class DiT(nn.Module):
         pretraining_tp=2,
         learn_sigma=True,
         use_flash_attn=False,
+        ep=True,
+        ep_async_op=None,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -494,9 +497,23 @@ class DiT(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
-        self.blocks = nn.ModuleList([
-            DiTBlock(hidden_size, num_heads, mlp_ratio, num_experts, num_experts_per_tok, pretraining_tp, use_flash_attn, layer_idx=i) for i in range(depth)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                DiTBlock(
+                    hidden_size,
+                    num_heads,
+                    mlp_ratio,
+                    num_experts,
+                    num_experts_per_tok,
+                    pretraining_tp,
+                    use_flash_attn,
+                    layer_idx=i,
+                    ep=ep,
+                    ep_async_op=ep_async_op,
+                )
+                for i in range(depth)
+            ]
+        )
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
 

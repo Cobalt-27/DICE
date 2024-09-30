@@ -63,15 +63,15 @@ if [ "$use_offload" = "y" ]; then
     extra_args+=" --offload"
 fi
 
-read -p "Use --filter-samples? (y/n, default y): " use_filter_samples
-use_filter_samples=${use_filter_samples:-y}
-if [ "$use_filter_samples" = "y" ]; then
-    extra_args+=" --filter-samples"
+read -p "Use --trim-samples? (y/n, default y): " use_trim_samples
+use_trim_samples=${use_trim_samples:-y}
+if [ "$use_trim_samples" = "y" ]; then
+    extra_args+=" --trim-samples"
 fi
 
-read -p "Enter cache prefetch (default not set): " cache_prefetch
+read -p "Enter cache prefetch (default None): " cache_prefetch
 
-read -p "Enter cache stride (default not set): " cache_stride
+read -p "Enter cache stride (default None): " cache_stride
 
 if [ -n "$cache_prefetch" ]; then
     extra_args+=" --cache-prefetch $cache_prefetch"

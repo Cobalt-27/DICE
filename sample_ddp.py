@@ -48,12 +48,11 @@ def create_npz_from_sample_folder(sample_dir, num=50_000):
     return npz_path
 
 
+
 def main(args):
     """
     Run sampling.
     """
-    from models import set_ep_async
-    set_ep_async(args.diep)
 
     torch.backends.cuda.matmul.allow_tf32 = args.tf32  # True: fast but may lead to some small numerical differences
     assert torch.cuda.is_available(), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
@@ -90,6 +89,8 @@ def main(args):
         num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
         pretraining_tp=pretraining_tp,
         use_flash_attn=use_flash_attn,
+        ep=True,
+        ep_async_op=args.diep,
     ).to(device)
     
     if dtype == torch.float16:
@@ -221,10 +222,10 @@ def main(args):
         
         if dtype == torch.float16:
             samples = vae.decode(image / 0.18215).sample # only the last one is needed
-            if args.filter_samples:
+            if args.trim_samples:
                 samples = samples[:samples.shape[0] // n] # keep only one sample per batch
         else:
-            if args.filter_samples:
+            if args.trim_samples:
                 samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
@@ -282,7 +283,7 @@ if __name__ == "__main__":
     parser.add_argument("--extra-name",type=str,default=None)
     
     # DiEP related
-    parser.add_argument("--filter-samples", action="store_true", help="Keep only one sample per batch.")
+    parser.add_argument("--trim-samples", action="store_true", help="Keep only one sample per batch.")
     parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
