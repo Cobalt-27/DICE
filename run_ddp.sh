@@ -63,11 +63,23 @@ if [ "$use_offload" = "y" ]; then
     extra_args+=" --offload"
 fi
 
-read -p "Enter cache prefetch (default 2): " cache_prefetch
-cache_prefetch=${cache_prefetch:-2}
+read -p "Use --filter-samples? (y/n, default y): " use_filter_samples
+use_filter_samples=${use_filter_samples:-y}
+if [ "$use_filter_samples" = "y" ]; then
+    extra_args+=" --filter-samples"
+fi
 
-read -p "Enter cache stride (default 2): " cache_stride
-cache_stride=${cache_stride:-2}
+read -p "Enter cache prefetch (default not set): " cache_prefetch
+
+read -p "Enter cache stride (default not set): " cache_stride
+
+if [ -n "$cache_prefetch" ]; then
+    extra_args+=" --cache-prefetch $cache_prefetch"
+fi
+
+if [ -n "$cache_stride" ]; then
+    extra_args+=" --cache-stride $cache_stride"
+fi
 
 read -p "Enter number of FID samples (default $((per_proc_batch_size * world_size))): " fid_samples
 fid_samples=${fid_samples:-$((per_proc_batch_size * world_size))}
@@ -87,6 +99,4 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --num-sampling-steps $num_sample_steps \
 --num-fid-samples $fid_samples \
 --tf32 \
---cache-prefetch $cache_prefetch \
---cache-stride $cache_stride \
 $extra_args

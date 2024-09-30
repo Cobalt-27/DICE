@@ -65,7 +65,7 @@ batch_size=$start_batch_size
 while [ $batch_size -le $end_batch_size ]; do
     echo "Running test with per_proc_batch_size: $batch_size"
     
-    fid_samples=$((batch_size * 4)) # 4 iters
+    fid_samples=$((batch_size * world_size * 2)) # 2 iters
 
     torchrun --nproc_per_node $world_size sample_ddp.py \
     --per-proc-batch-size $batch_size \
@@ -79,11 +79,12 @@ while [ $batch_size -le $end_batch_size ]; do
     --num-fid-samples $fid_samples \
     --tf32 \
     --extra-folder-name $folder_name \
+    --filter-samples \
     --diep \
     --auto-gc \
-    --offload \
-    --cache-prefetch $cache_prefetch \
-    --cache-stride $cache_stride \
+    # --offload \
+    # --cache-prefetch $cache_prefetch \
+    # --cache-stride $cache_stride \
 
     torchrun --nproc_per_node $world_size sample_ddp.py \
     --per-proc-batch-size $batch_size \
@@ -97,6 +98,7 @@ while [ $batch_size -le $end_batch_size ]; do
     --num-fid-samples $fid_samples \
     --extra-folder-name $folder_name \
     --tf32 \
+    --filter-samples \
     
     echo "Test completed for per_proc_batch_size: $batch_size"
     

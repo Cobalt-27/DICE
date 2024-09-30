@@ -157,17 +157,21 @@ def main(args):
             formatted_args = json.dumps(args_dict, indent=4)
             f.write(formatted_args)
 
-    strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
+
+    if args.offload and args.cache_stride is not None:
+        strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
     
     cache_init(
         cache_capacity=model.depth,
         auto_gc=args.auto_gc,
         offload=args.offload,
         prefetch_size=args.cache_prefetch,
-        offload_mask=strided_offload_mask(args.cache_stride),
+        offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
     )
-    total_time = 0
+    
     for _ in pbar:
+        measured_total_time = 0
+        CudaProfiler.prof().reset()
         # Sample images:
         cache_clear()
         prof_lines=[]
@@ -177,11 +181,13 @@ def main(args):
                 STEPSIZE = 50
                 init_noise = torch.randn(n, model.in_channels, latent_size, latent_size, device=device) 
                 conds = torch.randint(0, args.num_classes, (n,), device=device)
+                torch.cuda.synchronize()
+                time_start = time.time()
                 CudaProfiler.prof().start('total')
                 image = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
                 CudaProfiler.prof().stop('total')
-                samples = vae.decode(image / 0.18215).sample # only the last one is needed
-                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
+                torch.cuda.synchronize()
+                time_end = time.time()
         else:
             z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
             y = torch.randint(0, args.num_classes, (n,), device=device)
@@ -205,15 +211,28 @@ def main(args):
             CudaProfiler.prof().stop('total')
             torch.cuda.synchronize()
             time_end = time.time()
-            total_time += time_end - time_start
-            mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
-            prof_lines.append(mem_usage_line)
-            samples = samples[:samples.shape[0] // n] # keep only one sample per batch
+            
+            
+        measured_total_time += time_end - time_start
+        mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
+        prof_lines.append(mem_usage_line)
+        measured_total_time_line = f"Measured total time of all passed iters: {measured_total_time:.2f}s"
+        prof_lines.append(measured_total_time_line)
+        
+        if dtype == torch.float16:
+            samples = vae.decode(image / 0.18215).sample # only the last one is needed
+            if args.filter_samples:
+                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
+        else:
+            if args.filter_samples:
+                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-            # XXX: extremely large mem usage after each iter, need to find out why
+            # XXX: extremely large mem usage after each iter, need to find out why, currently handling it by trimming the samples
             # XXX: 0.18215???
             samples = vae.decode(samples / 0.18215).sample
+        
+        
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
 
         # Save samples to disk as individual .png files
@@ -229,13 +248,13 @@ def main(args):
             with open(prof_path, "a") as f:
                 f.writelines([line + "\n" for line in prof_lines])
             print("\n".join(prof_lines))
+        torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
     dist.barrier()
     if rank == 0:
         # XXX: no npz for now
         # create_npz_from_sample_folder(sample_folder_dir, args.num_fid_samples)
-        print(f"Measured sampling time: {total_time:.2f}s")
         print("Done.")
     dist.barrier()
     dist.destroy_process_group()
@@ -263,10 +282,23 @@ if __name__ == "__main__":
     parser.add_argument("--extra-name",type=str,default=None)
     
     # DiEP related
+    parser.add_argument("--filter-samples", action="store_true", help="Keep only one sample per batch.")
     parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
-    parser.add_argument("--cache-stride", type=int, default=1, help="stride size for partial offloading")
+    parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
     args = parser.parse_args()
+    
+    # DiEP related assertions
+    if not args.diep:
+        assert not args.auto_gc, "auto_gc is only available when using DiEP."
+        assert not args.offload, "offload is only available when using DiEP."
+        assert args.cache_prefetch is None, "cache_prefetch is only available when using DiEP."
+        assert args.cache_stride is None, "cache_stride is only available when using DiEP."
+    else:
+        if not args.offload:
+            assert args.cache_prefetch is None, "cache_prefetch is only available when using offload."
+            assert args.cache_stride is None, "cache_stride is only available when using offload."
+            
     main(args)
