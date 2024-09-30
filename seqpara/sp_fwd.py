@@ -30,6 +30,9 @@ class AttentionSP(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.async_op = True
+        import uuid
+        self.cache_key = uuid.uuid4().int
         
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -59,17 +62,12 @@ class AttentionSP(nn.Module):
         # All-gather K and V from all processes
         world_size = dist.get_world_size()
 
-        # Prepare empty tensors to gather K and V
-        k_list = [x.new_empty(k.shape).contiguous() for _ in range(world_size)]
-        v_list = [x.new_empty(v.shape).contiguous() for _ in range(world_size)]
-
-        # All-gather K and V tensors
-        dist.all_gather(k_list, k)
-        dist.all_gather(v_list, v)
-
-        # Concatenate K and V along the sequence dimension
-        k_all = torch.cat(k_list, dim=2)  # Shape: [B, num_heads, N_total, head_dim]
-        v_all = torch.cat(v_list, dim=2)
+        if self.async_op:
+            from .df import sp_all_gather_async
+            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key)
+        else:
+            k_all = sp_all_gather(k, concat_dim=2)
+            v_all = sp_all_gather(v, concat_dim=2)
 
         # Calculate total sequence length
         N_total = N_local * world_size
@@ -141,14 +139,12 @@ def sp_scatter(x):
     assert x_local.shape == (N, T_local, D), "Input shape mismatch after scattering tokens, {x_local.shape}!=({N}, {T_local}, {D})"
     return x_local
 
-def sp_allgather(x_local):
+def sp_all_gather(x_local, concat_dim, async_op=False):
     """
     AllGather tokens from all ranks after processing local slices.
     This is used after local attention processing in sequence parallelism.
     """
-    N, T_local, D = x_local.shape
     world_size = dist.get_world_size()
-    T = T_local * world_size
     x_local = x_local.contiguous()  # Ensure the tensor is contiguous
     
 
@@ -156,10 +152,21 @@ def sp_allgather(x_local):
     x_gather_list = [torch.zeros_like(x_local).contiguous() for _ in range(world_size)]
 
     # Perform all_gather to gather from all ranks
-    dist.all_gather(tensor_list=x_gather_list, tensor=x_local)
+    handle = dist.all_gather(tensor_list=x_gather_list, tensor=x_local, async_op=async_op)
+    
+    if async_op:
+        assert concat_dim is None, "Cannot concatenate tensors in async mode."
+        return x_gather_list, handle
+    
+    if concat_dim is None:
+        return x_gather_list
 
     # Concatenate gathered slices to form the full sequence
-    x_full = torch.cat(x_gather_list, dim=1)  # Shape: [N, T, D]
+    x_full = torch.cat(x_gather_list, dim=concat_dim)  # Shape: [N, T, D]
     
-    assert x_full.shape == (N, T, D), f"Output shape mismatch after all-gathering tokens: {x_full.shape}"
+    expected_shape = list(x_local.shape)
+    expected_shape[concat_dim] *= world_size
+    expected_shape = tuple(expected_shape)
+    
+    assert x_full.shape == expected_shape, f"Output shape mismatch after all-gathering tokens: {x_full.shape}"
     return x_full

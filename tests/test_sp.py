@@ -53,7 +53,7 @@ class AttentionSingleNode(nn.Module):
         x = x.transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x, k, v
+        return x
 
 def find_free_port():
     """Finds a free port on localhost."""
@@ -91,30 +91,28 @@ def run_attention_test(rank, world_size, port, seed):
     # Create input tensor on rank 0 and scatter to all ranks
     x = torch.randn(N, T_total, D, device=device)
     # Scatter the input tensor across processes
-    from seqpara.sp_fwd import sp_scatter, sp_allgather
+    from seqpara.sp_fwd import sp_scatter, sp_all_gather
     
     original_x = x.clone()
     x_temp = sp_scatter(x)
-    x = sp_allgather(x_temp)
+    x = sp_all_gather(x_temp,concat_dim=1)
     if rank == 0:
         assert torch.equal(x, original_x), f"Scatter and gather did not work as expected, relative error: {((x - original_x).norm() / original_x.norm()):.2e}"
     x_local = sp_scatter(x)
-    assert torch.equal(sp_allgather(x_local), x), "Scatter and gather did not work as expected."
+    assert torch.equal(sp_all_gather(x_local,concat_dim=1), x), "Scatter and gather did not work as expected."
     
 
     # Run AttentionSP on local slice
-    output_sp_local, k_sp, v_sp = attn_sp(x_local)  # Shape: [N, T_local, D]
+    output_sp_local = attn_sp(x_local)  # Shape: [N, T_local, D]
 
-    output_sp = sp_allgather(output_sp_local)  # Shape: [N, T_total, D]
+    output_sp = sp_all_gather(output_sp_local,concat_dim=1)  # Shape: [N, T_total, D]
 
     # Run original Attention on the full input (only on rank 0)
     if rank == 0:
         # Create the original Attention module
         attn = AttentionSingleNode(dim=D, num_heads=num_heads, attn=attn_sp).to(device)
 
-        output, real_k, real_v = attn(x)  # Shape: [N, T_total, D]
-        assert torch.allclose(k_sp, real_k, atol=1e-6), f"K mismatch, relative error: {((k_sp - real_k).norm() / real_k.norm()):.2e}"
-        assert torch.allclose(v_sp, real_v, atol=1e-6), f"V mismatch, relative error: {((v_sp - real_v).norm() / real_v.norm()):.2e}"
+        output = attn(x)  # Shape: [N, T_total, D]
         # Compare outputs
         assert torch.allclose(output_sp, output, atol=1e-6), f"Outputs do not match, relative error: {((output_sp - output).norm() / output.norm()):.2e}"
     # Cleanup

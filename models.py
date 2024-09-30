@@ -541,12 +541,15 @@ class DiT(nn.Module):
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
-        from seqpara.sp_fwd import sp_scatter, sp_allgather, sp_broadcast
+        """
+        NOTE: SEQUENCE PARALLELISM STARTS HERE
+        """
+        from seqpara.sp_fwd import sp_scatter, sp_all_gather, sp_broadcast
         x = sp_scatter(x)
         c = sp_broadcast(c)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
-        x = sp_allgather(x)
+        x = sp_all_gather(x,concat_dim=1)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x

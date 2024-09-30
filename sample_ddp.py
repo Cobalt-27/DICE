@@ -46,6 +46,8 @@ def main(args):
     """
     Run sampling.
     """
+    from seqpara.df import sp_cache_init
+    sp_cache_init(auto_gc=True)
     torch.backends.cuda.matmul.allow_tf32 = args.tf32  # True: fast but may lead to some small numerical differences
     assert torch.cuda.is_available(), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
     torch.set_grad_enabled(False)
