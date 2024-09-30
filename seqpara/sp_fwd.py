@@ -15,22 +15,22 @@ class AttentionSP(nn.Module):
             proj_drop: float = 0.,
             norm_layer: nn.Module = nn.LayerNorm,
     ) -> None:
+        from timm.models.vision_transformer import use_fused_attn
         super().__init__()
-        assert not qk_norm, 'qk_norm not supported'
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
+        self.fused_attn = use_fused_attn()
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         # no norm for q,k in the original implementation
-        self.q_norm = nn.Identity()
-        self.k_norm = nn.Identity()
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-        from timm.models.vision_transformer import use_fused_attn
-        self.fused_attn = use_fused_attn()
+        
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -78,13 +78,12 @@ class AttentionSP(nn.Module):
         assert k_all.shape == (B, self.num_heads, N_total, self.head_dim), f"k_all shape mismatch: {k_all.shape}"
         assert v_all.shape == (B, self.num_heads, N_total, self.head_dim), f"v_all shape mismatch: {v_all.shape}"
 
-        # if self.fused_attn:
-        #     x = F.scaled_dot_product_attention(
-        #         q, k_all, v_all,
-        #         dropout_p=self.attn_drop.p if self.training else 0.,
-        #     )
-        # else:
-        if True:
+        if self.fused_attn:
+            x = F.scaled_dot_product_attention(
+                q, k_all, v_all,
+                dropout_p=self.attn_drop.p if self.training else 0.,
+            )
+        else:
             q = q * self.scale
             attn = q @ k_all.transpose(-2, -1)
             attn = attn.softmax(dim=-1)
