@@ -25,10 +25,10 @@ case $choice in
         ;;
 esac
 
-echo "Select para_mode: 1) none    2) ep    3) diep    4) sp    5) df"
+echo "Select para_mode: 1) dp    2) ep    3) diep    4) sp    5) df"
 read -p "Enter choice [1-5]: " para_choice
 
-para_modes=("none" "ep" "diep" "sp" "df")
+para_modes=("dp" "ep" "diep" "sp" "df")
 if [[ $para_choice -ge 1 && $para_choice -le 5 ]]; then
     para_mode=${para_modes[$((para_choice-1))]}
 else

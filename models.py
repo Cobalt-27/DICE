@@ -34,23 +34,18 @@ except Exception as e:
 from enum import Enum
 class PARA_MODE(Enum):
     
-    NONE = "none"
+    DP = "dp"
     SP = "sp"
     EP = "ep"
     DIEP = "diep"
     DF = "df"
     
     @staticmethod
-    def is_para(val):
-        assert val is not None
-        return not val == PARA_MODE.NONE
-    
-    @staticmethod
     def is_ep(val):
         """
         check if the mode is expert-parallel
         """
-        assert val is not None
+        assert isinstance(val, PARA_MODE)
         return val == PARA_MODE.EP or val == PARA_MODE.DIEP
     
     @staticmethod
@@ -58,7 +53,7 @@ class PARA_MODE(Enum):
         """
         check if the mode is sequence-parallel
         """
-        assert val is not None
+        assert isinstance(val, PARA_MODE)
         return val == PARA_MODE.SP or val == PARA_MODE.DF
     
     @staticmethod
@@ -66,7 +61,7 @@ class PARA_MODE(Enum):
         """
         check if the mode is asynchronous parallelism
         """
-        assert val is not None
+        assert isinstance(val, PARA_MODE)
         return val == PARA_MODE.DIEP or val == PARA_MODE.DF
 
 
