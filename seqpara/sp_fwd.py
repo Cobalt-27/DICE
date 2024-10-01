@@ -38,6 +38,7 @@ class FlashSelfMHAModifiedSP(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         self.cache_key = layer_idx
         self.async_op = async_op
+        assert async_op is not None, "async_op must be specified"
     
     def forward(self, x,):
         """
@@ -66,12 +67,12 @@ class FlashSelfMHAModifiedSP(nn.Module):
         """
         if self.async_op:
             from .df import sp_all_gather_async
-            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key)
+            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key, concat_dim=1)
         else:
             k_all = sp_all_gather(k, concat_dim=1)
             v_all = sp_all_gather(v, concat_dim=1)
-        assert k_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"k_all shape mismatch: {k_all.shape}"
-        assert v_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"v_all shape mismatch: {v_all.shape}"
+        assert k_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"k_all shape mismatch: {k_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
+        assert v_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"v_all shape mismatch: {v_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
 
         kv = torch.stack([k_all, v_all], dim=2)     # [b, s, 2, h, d]
         context = self.inner_attn(q,kv)

@@ -41,29 +41,33 @@ class PARA_MODE(Enum):
     DF = "df"
     
     @staticmethod
-    def is_para(self):
-        return not self == PARA_MODE.NONE
+    def is_para(val):
+        assert val is not None
+        return not val == PARA_MODE.NONE
     
     @staticmethod
-    def is_ep(self):
+    def is_ep(val):
         """
         check if the mode is expert-parallel
         """
-        return self == PARA_MODE.EP or self == PARA_MODE.DIEP
+        assert val is not None
+        return val == PARA_MODE.EP or val == PARA_MODE.DIEP
     
     @staticmethod
-    def is_sp(self):
+    def is_sp(val):
         """
         check if the mode is sequence-parallel
         """
-        return self == PARA_MODE.SP or self == PARA_MODE.DF
+        assert val is not None
+        return val == PARA_MODE.SP or val == PARA_MODE.DF
     
     @staticmethod
-    def async_op(self):
+    def async_op(val):
         """
         check if the mode is asynchronous parallelism
         """
-        return self == PARA_MODE.DIEP or self == PARA_MODE.DF
+        assert val is not None
+        return val == PARA_MODE.DIEP or val == PARA_MODE.DF
 
 
 def modulate(x, shift, scale):
