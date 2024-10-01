@@ -151,8 +151,8 @@ def test_offloading_behavior():
     cache.put(1, (handles2, tensor2.clone(), send_buf2.clone()))
     arbitrary_tensor_op()
 
-    # Access entry 0 to trigger offloading of other entries
-    cache.get(0)
+    # Access (put) entry 0 to trigger offloading of other entries
+    cache.put(0, (handles1, tensor1.clone(), send_buf1.clone()))
     arbitrary_tensor_op()
     # Entry 1 should be offloaded
     entry1 = cache.cache[1]

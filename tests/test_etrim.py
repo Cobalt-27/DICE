@@ -3,16 +3,16 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from expertpara.etrim import trim_module_list, trim_state_dict, DummyExpert, _needed_expert_indices
-from .test_ep import find_port
+from .utils import find_free_port, set_seed
 import time
 import pytest
 
-def run_trim_test(rank, world_size, num_total_experts, port):
+def run_trim_test(rank, world_size, num_total_experts, port, seed):
     # Initialize the process group
     if rank != 0:
         time.sleep(.5)
     dist.init_process_group("gloo", rank=rank, world_size=world_size, init_method=f'tcp://localhost:{port}/')
-    torch.manual_seed(42+rank)  # Ensure reproducibility
+    set_seed(seed)
 
     # Create a SparseMoeBlock and replace experts
     original_module_list = nn.ModuleList([nn.Linear(16, 16) for _ in range(num_total_experts)])
@@ -43,17 +43,7 @@ def run_trim_test(rank, world_size, num_total_experts, port):
     dist.destroy_process_group()
     
 
-def warpped_run_trim_test(rank, world_size, num_total_experts, port, error_queue):
-    try:
-        run_trim_test(rank, world_size, num_total_experts, port)
-    except Exception as e:
-        error_queue.put(e)
-
-@pytest.mark.parametrize("num_total_experts,world_size", [(8, 4), (4, 2), (16, 4)])
-def test_trimming(num_total_experts, world_size):
+@pytest.mark.parametrize("num_total_experts,world_size,seed", [(8, 4, 42), (4, 2, 43), (16, 4, 44)])
+def test_trimming(num_total_experts, world_size, seed):
     mp.set_start_method('spawn', force=True) # must set, otherwise mp.Queue fails
-    error_queue = mp.Queue()
-    mp.spawn(warpped_run_trim_test, args=(world_size, num_total_experts, find_port(),error_queue), nprocs=world_size, join=True)
-    # check queue, fail test if error
-    if not error_queue.empty():
-        raise error_queue.get()
+    mp.spawn(run_trim_test, args=(world_size, num_total_experts, find_free_port(), seed), nprocs=world_size, join=True)

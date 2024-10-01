@@ -4,8 +4,8 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from expertpara.ep_fwd import moe_infer_ep
 from expertpara.diep import ep_cache_init
+from .utils import find_free_port, set_seed
 import random
-import socket
 import time
 import pytest
 
@@ -51,12 +51,6 @@ def moe_infer_single_node(experts, num_experts_per_tok, x, flat_expert_indices, 
             expert_cache.scatter_reduce_(0, exp_token_idx.view(-1, 1).repeat(1, x.shape[-1]), expert_out, reduce='sum')
     return expert_cache
 
-def find_port(): # make it public to be used in other dist tests
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        port = s.getsockname()[1]
-    return port
-
 N_TOKENS = 128
 N_ITER = 4
 HIDDEN_SIZE = 36
@@ -74,16 +68,15 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
     # Set the device to CPU
     device = torch.device('cpu')
     # Set the random seed for reproducibility
-    torch.manual_seed(seed) # all proc shall use the same seed for expert initialization
+    set_seed(seed)
     experts = []
     for _ in range(num_total_experts):
         linear = nn.Linear(hidden_size, hidden_size)
         nn.init.uniform_(linear.weight, a=0.0, b=1.0)  # Initialize weights with random values
         experts.append(linear)
     
-    torch.manual_seed(seed + rank) # each proc shall use a different seed for input
+    set_seed(seed+rank)
     
-    # Run the _infer_grouped function
     prev_out = []
     ep_cache_init(1)
     for i in range(n_iter):
@@ -130,7 +123,7 @@ def test_infer(seed, async_op):
     mp.set_start_method('spawn', force=True) # must set, otherwise pytest cannot output subprocess error
     mp.spawn(
         run_test,
-        args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_port(), seed, async_op),
+        args=(WORLD_SIZE, NUM_TOTAL_EXPERTS, NUM_EXPERTS_PER_TOK, N_TOKENS, N_ITER, HIDDEN_SIZE, find_free_port(), seed, async_op),
         nprocs=WORLD_SIZE,
         join=True
     )

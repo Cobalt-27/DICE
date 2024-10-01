@@ -2,14 +2,11 @@ import torch
 import pytest
 from expertpara.prof import CudaProfiler
 import random
-# Set a global random seed for all tests
-@pytest.fixture(scope="session", autouse=True)
-def set_seed():
-    seed = 42  # Any number you prefer
-    random.seed(seed)
-    torch.manual_seed(seed)
-    
-def test_profiler_with_manual_and_profiler_events():
+from .utils import set_seed
+
+@pytest.mark.parametrize("seed", [42, 43])
+def test_profiler_with_manual_and_profiler_events(seed):
+    set_seed(seed)
     profiler = CudaProfiler()
 
     # Create CUDA events for manual timing
@@ -61,7 +58,9 @@ def test_profiler_with_manual_and_profiler_events():
 
     print("Test 1 (A < AB < ABC) passed!")
 
-def test_multiple_sections():
+@pytest.mark.parametrize("seed", [42, 43])
+def test_multiple_sections(seed):
+    set_seed(seed)
     profiler = CudaProfiler()
 
     # Record timings for two separate operations (X and Y)
@@ -88,7 +87,9 @@ def test_multiple_sections():
 
     print("Test 2 (Multiple Sections) passed!")
 
-def test_overlapping_sections():
+@pytest.mark.parametrize("seed", [42, 43])
+def test_overlapping_sections(seed):
+    set_seed(seed)
     profiler = CudaProfiler()
 
     # Record timings for overlapping operations (P and PQ)
@@ -117,8 +118,9 @@ def test_overlapping_sections():
 
     print("Test 3 (Overlapping Sections) passed!")
 
-
-def test_manual_sync():
+@pytest.mark.parametrize("seed", [42, 43])
+def test_manual_sync(seed):
+    set_seed(seed)
     profiler = CudaProfiler()
 
     # Record timings for an operation
@@ -142,7 +144,9 @@ def test_manual_sync():
 
     print("Test 4 (Manual Sync) passed!")
 
-def test_profiler_accuracy():
+@pytest.mark.parametrize("seed", [42, 43])
+def test_profiler_accuracy(seed):
+    set_seed(seed)
     profiler = CudaProfiler()
 
     # Create CUDA events for manual timing
