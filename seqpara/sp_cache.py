@@ -60,4 +60,7 @@ class AllGatherCache:
         """
         # TODO: gc
         pass
+    
+    def tensors_size(self):
+        return 0
 

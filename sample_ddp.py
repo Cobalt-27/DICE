@@ -13,7 +13,7 @@ For a simple single-GPU/CPU sampling script, see sample.py.
 """
 import torch
 import torch.distributed as dist
-from models import DiT_models
+from models import DiT_models, PARA_MODE
 from download import find_model
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
@@ -27,7 +27,8 @@ import argparse
 from expertpara.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
-from expertpara.diep import cache_clear, cached_tensors_size, cache_init
+from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init
+from seqpara.df import sp_cache_init, sp_cache_clear, sp_cached_tensors_size
 import time
 
 
@@ -53,8 +54,6 @@ def main(args):
     """
     Run sampling.
     """
-    from seqpara.df import sp_cache_init
-    sp_cache_init(auto_gc=True)
     torch.backends.cuda.matmul.allow_tf32 = args.tf32  # True: fast but may lead to some small numerical differences
     assert torch.cuda.is_available(), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
     torch.set_grad_enabled(False)
@@ -90,8 +89,7 @@ def main(args):
         num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
         pretraining_tp=pretraining_tp,
         use_flash_attn=use_flash_attn,
-        ep=True,
-        ep_async_op=args.diep,
+        para_mode=args.para_mode,
     ).to(device)
     
     if dtype == torch.float16:
@@ -99,11 +97,12 @@ def main(args):
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
-    """
-    NOTE: trim unused experts, for ep only
-    """
-    trimmed_state_dict = trim_state_dict(state_dict, args.num_experts)
-    model.load_state_dict(trimmed_state_dict)
+    if PARA_MODE.is_ep(args.para_mode):
+        """
+        NOTE: trim unused experts, for ep only
+        """
+        state_dict = trim_state_dict(state_dict, args.num_experts)
+    model.load_state_dict(state_dict)
     
     model.eval()  # important!
     if rf:
@@ -116,11 +115,8 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    # ckpt_string_name = os.path.basename(args.ckpt).replace(".pt", "") if args.ckpt else "pretrained"
-    # folder_name = f"{model_string_name}-{ckpt_string_name}-size-{args.image_size}-vae-{args.vae}-" \
-    #               f"cfg-{args.cfg_scale}-seed-{args.global_seed}-async-{args.diep}"
     folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
-                  f"-seed-{args.global_seed}-diep-{args.diep}-gc-{args.auto_gc}-offload-{args.offload}-prefetch-{args.cache_prefetch}{'' if args.extra_name is None else f'-{args.extra_name}'}"
+                  f"-seed-{args.global_seed}-mode-{args.para_mode.value.upper()}-gc-{args.auto_gc}-offload-{args.offload}-prefetch-{args.cache_prefetch}{'' if args.extra_name is None else f'-{args.extra_name}'}"
     sample_folder_dir = os.path.join(args.sample_dir, folder_name)
     if args.extra_folder_name is not None:
         sample_folder_dir = os.path.join(args.sample_dir, args.extra_folder_name, folder_name)
@@ -155,27 +151,32 @@ def main(args):
         args_path = os.path.join(sample_folder_dir, "args.txt")
         with open(args_path, "w+") as f:
             import json
-            args_dict = vars(args)
+            args_dict = vars(args).copy()
+            args_dict['para_mode'] = args.para_mode.value # convert enum to string
             formatted_args = json.dumps(args_dict, indent=4)
             f.write(formatted_args)
 
-
-    if args.offload and args.cache_stride is not None:
-        strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
-    
-    cache_init(
-        cache_capacity=model.depth,
-        auto_gc=args.auto_gc,
-        offload=args.offload,
-        prefetch_size=args.cache_prefetch,
-        offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
-    )
+    if args.para_mode == PARA_MODE.DIEP:
+        if args.offload and args.cache_stride is not None:
+            strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
+        
+        ep_cache_init(
+            cache_capacity=model.depth,
+            auto_gc=args.auto_gc,
+            offload=args.offload,
+            prefetch_size=args.cache_prefetch,
+            offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
+        )
+    elif args.para_mode == PARA_MODE.DF:
+        sp_cache_init(auto_gc=True)
     
     for _ in pbar:
-        measured_total_time = 0
         CudaProfiler.prof().reset()
         # Sample images:
-        cache_clear()
+        if args.para_mode == PARA_MODE.DIEP:
+            ep_cache_clear()
+        elif args.para_mode == PARA_MODE.DF:
+            sp_cache_clear()
         prof_lines=[]
         if dtype == torch.float16: 
             # use rf
@@ -186,7 +187,7 @@ def main(args):
                 torch.cuda.synchronize()
                 time_start = time.time()
                 CudaProfiler.prof().start('total')
-                image = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
+                samples = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
                 CudaProfiler.prof().stop('total')
                 torch.cuda.synchronize()
                 time_end = time.time()
@@ -215,28 +216,21 @@ def main(args):
             time_end = time.time()
             
             
-        measured_total_time += time_end - time_start
         mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
-        prof_lines.append(mem_usage_line)
-        measured_total_time_line = f"Measured total time of all passed iters: {measured_total_time:.2f}s"
-        prof_lines.append(measured_total_time_line)
+        measured_total_time_line = f"Measured total time of all passed iters: {(time_end - time_start):.2f}s"
+        prof_lines += [mem_usage_line, measured_total_time_line]
         
+        if args.trim_samples:
+            samples = samples[:samples.shape[0] // n] # keep only one sample per batch
         if dtype == torch.float16:
-            if args.trim_samples:
-                image = image[:image.shape[0] // n] # keep only one sample per batch
-            samples = vae.decode(image / 0.18215).sample # only the last one is needed
+            samples = vae.decode(samples / 0.18215).sample # only the last one is needed
         else:
-            if args.trim_samples:
-                samples = samples[:samples.shape[0] // n] # keep only one sample per batch
             if using_cfg:
                 samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-            # XXX: extremely large mem usage after each iter, need to find out why, currently handling it by trimming the samples
-            # XXX: 0.18215???
-            samples = vae.decode(samples / 0.18215).sample
-        
+            samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
         
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-
+        
         # Save samples to disk as individual .png files
         for i, sample in enumerate(samples):
             index = i * dist.get_world_size() + rank + total
@@ -244,7 +238,11 @@ def main(args):
         total += global_batch_size
 
         if rank == 0:
-            cache_line = f"Cache size: {cached_tensors_size() / (1024 * 1024):.2f} MB"
+            cache_line = "No cache used."
+            if args.para_mode == PARA_MODE.DIEP:
+                cache_line = f"Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
+            elif args.para_mode == PARA_MODE.DF:
+                cache_line = f"Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
             prof_lines.append(cache_line)
             prof_lines+=analyse_prof(CudaProfiler.prof())
             with open(prof_path, "a") as f:
@@ -283,18 +281,18 @@ if __name__ == "__main__":
     parser.add_argument("--extra-folder-name",type=str,default=None)
     parser.add_argument("--extra-name",type=str,default=None)
     
-    # DiEP related
-    parser.add_argument("--trim-samples", action="store_true", help="Keep only one sample per batch.")
-    parser.add_argument("--diep", action="store_true", help="Use DiEP for async expert parallelism.")
+    # parallelism
+    parser.add_argument("--trim-samples", action="store_true", help="Keep only one sample per batch to save mem.")
+    parser.add_argument("--para-mode", type=str, choices=[mode.value for mode in PARA_MODE], default="none")
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
     parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
     args = parser.parse_args()
     
-    # DiEP related assertions
-    if not args.diep:
-        assert not args.auto_gc, "auto_gc is only available when using DiEP."
+    # arguments check
+    args.para_mode = PARA_MODE(args.para_mode)
+    if args.para_mode != PARA_MODE.DIEP:
         assert not args.offload, "offload is only available when using DiEP."
         assert args.cache_prefetch is None, "cache_prefetch is only available when using DiEP."
         assert args.cache_stride is None, "cache_stride is only available when using DiEP."
@@ -302,5 +300,7 @@ if __name__ == "__main__":
         if not args.offload:
             assert args.cache_prefetch is None, "cache_prefetch is only available when using offload."
             assert args.cache_stride is None, "cache_stride is only available when using offload."
+    if not PARA_MODE.async_op(args.para_mode):
+        assert not args.auto_gc, "auto_gc is only available when using asynchronous operations."
             
     main(args)

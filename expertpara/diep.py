@@ -30,14 +30,14 @@ _diep_cache_combine = None
 _CACHE_DISPATCH_VAL_LEN = 7
 _CACHE_COMBINE_VAL_LEN = 5
 
-def cached_tensors_size():
+def ep_cached_tensors_size():
     """
     Measures the size of all the tensors in the cache in bytes.
     """
     return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
 
 
-def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, offload_mask=None):
+def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, offload_mask=None):
     if not offload:
         assert prefetch_size == None
     global _diep_cache_dispatch, _diep_cache_combine
@@ -59,7 +59,7 @@ def cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None,
     )
 
 
-def cache_clear():
+def ep_cache_clear():
     _diep_cache_dispatch.clear()
     _diep_cache_combine.clear()
 

@@ -3,6 +3,83 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
+class FlashSelfMHAModifiedSP(nn.Module):
+    """
+    self-attention with flashattention
+    """
+    def __init__(self,
+                 dim,
+                 num_heads,
+                 qkv_bias=True,
+                 qk_norm=False,
+                 attn_drop=0.0,
+                 proj_drop=0.0,
+                 device=None,
+                 dtype=None,
+                 norm_layer=nn.LayerNorm,
+                 layer_idx=None,
+                 async_op=None,
+                 ):
+        from flash_attn.modules.mha import FlashCrossAttention
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        assert self.dim % num_heads == 0, "self.kdim must be divisible by num_heads"
+        self.head_dim = self.dim // num_heads
+        assert self.head_dim % 8 == 0 and self.head_dim <= 128, "Only support head_dim <= 128 and divisible by 8"
+
+        self.Wqkv = nn.Linear(dim, 3 * dim, bias=qkv_bias, **factory_kwargs)
+        # TODO: eps should be 1 / 65530 if using fp16
+        self.q_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim, elementwise_affine=True, eps=1e-6) if qk_norm else nn.Identity()
+        self.inner_attn = FlashCrossAttention(attention_dropout=attn_drop)
+        self.out_proj = nn.Linear(dim, dim, bias=qkv_bias, **factory_kwargs)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.cache_key = layer_idx
+        self.async_op = async_op
+    
+    def forward(self, x,):
+        """
+        Parameters
+        ----------
+        x: torch.Tensor
+            (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim)
+        """
+        b, s, d = x.shape
+
+        qkv = self.Wqkv(x)
+        qkv = qkv.view(b, s, 3, self.num_heads, self.head_dim)  # [b, s, 3, h, d]
+        q, k, v = qkv.unbind(dim=2) # [b, s, h, d]
+        q = self.q_norm(q).half()   # [b, s, h, d]
+        k = self.k_norm(k).half()
+        
+        k = k.contiguous()
+        v = v.contiguous()
+        assert q.shape == (b, s, self.num_heads, self.head_dim), f"q shape mismatch: {q.shape}"
+        assert k.shape == (b, s, self.num_heads, self.head_dim), f"k shape mismatch: {k.shape}"
+        assert v.shape == (b, s, self.num_heads, self.head_dim), f"v shape mismatch: {v.shape}"
+        world_size = dist.get_world_size()
+        """
+        NOTE:
+        Sequence Parallelism: All-gather K and V from all processes.
+        """
+        if self.async_op:
+            from .df import sp_all_gather_async
+            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key)
+        else:
+            k_all = sp_all_gather(k, concat_dim=1)
+            v_all = sp_all_gather(v, concat_dim=1)
+        assert k_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"k_all shape mismatch: {k_all.shape}"
+        assert v_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"v_all shape mismatch: {v_all.shape}"
+
+        kv = torch.stack([k_all, v_all], dim=2)     # [b, s, 2, h, d]
+        context = self.inner_attn(q,kv)
+        out = self.out_proj(context.view(b, s, d))
+        out = self.proj_drop(out)
+
+        return out
+
 class AttentionSP(nn.Module):
 
     def __init__(
@@ -14,6 +91,8 @@ class AttentionSP(nn.Module):
             attn_drop: float = 0.,
             proj_drop: float = 0.,
             norm_layer: nn.Module = nn.LayerNorm,
+            layer_idx = None,
+            async_op = None,
     ) -> None:
         from timm.models.vision_transformer import use_fused_attn
         super().__init__()
@@ -30,9 +109,8 @@ class AttentionSP(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-        self.async_op = True
-        import uuid
-        self.cache_key = uuid.uuid4().int
+        self.async_op = async_op
+        self.cache_key = layer_idx
         
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -50,7 +128,6 @@ class AttentionSP(nn.Module):
         q, k, v = qkv.unbind(0)  # Each has shape: [B, num_heads, N_local, head_dim]
         q, k = self.q_norm(q), self.k_norm(k)
         
-        q = q.contiguous()
         k = k.contiguous()
         v = v.contiguous()
 
@@ -59,9 +136,11 @@ class AttentionSP(nn.Module):
         assert k.shape == (B, self.num_heads, N_local, self.head_dim), f"k shape mismatch: {k.shape}"
         assert v.shape == (B, self.num_heads, N_local, self.head_dim), f"v shape mismatch: {v.shape}"
 
-        # All-gather K and V from all processes
         world_size = dist.get_world_size()
-
+        """
+        NOTE:
+        Sequence Parallelism: All-gather K and V from all processes.
+        """
         if self.async_op:
             from .df import sp_all_gather_async
             k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key)

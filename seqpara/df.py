@@ -16,7 +16,10 @@ def sp_cache_init(auto_gc):
     _kcache = AllGatherCache(auto_gc)
     _vcache = AllGatherCache(auto_gc)
 
-def sp_clear_cache():
+def sp_cached_tensors_size():
+    return _kcache.tensors_size() + _vcache.tensors_size()
+
+def sp_cache_clear():
     _kcache.clear()
     _vcache.clear()
 

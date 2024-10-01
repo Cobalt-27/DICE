@@ -31,6 +31,39 @@ except Exception as e:
 
 
 # selected_ids_list = []
+from enum import Enum
+class PARA_MODE(Enum):
+    
+    NONE = "none"
+    SP = "sp"
+    EP = "ep"
+    DIEP = "diep"
+    DF = "df"
+    
+    @staticmethod
+    def is_para(self):
+        return not self == PARA_MODE.NONE
+    
+    @staticmethod
+    def is_ep(self):
+        """
+        check if the mode is expert-parallel
+        """
+        return self == PARA_MODE.EP or self == PARA_MODE.DIEP
+    
+    @staticmethod
+    def is_sp(self):
+        """
+        check if the mode is sequence-parallel
+        """
+        return self == PARA_MODE.SP or self == PARA_MODE.DF
+    
+    @staticmethod
+    def async_op(self):
+        """
+        check if the mode is asynchronous parallelism
+        """
+        return self == PARA_MODE.DIEP or self == PARA_MODE.DF
 
 
 def modulate(x, shift, scale):
@@ -238,7 +271,7 @@ class SparseMoeBlock(nn.Module):
     """
     A mixed expert module containing shared experts.
     """
-    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, ep=True, ep_async_op=None):
+    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, para_mode=None):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
@@ -246,7 +279,8 @@ class SparseMoeBlock(nn.Module):
         """
         NOTE: trim unused experts, for ep only
         """
-        if ep: # trim unused experts if expertpara is enabled
+        if PARA_MODE.is_ep(para_mode):
+            # trim unused experts if expertpara is enabled
             self.experts = trim_module_list(self.experts, num_experts)
         
         self.gate = MoEGate(embed_dim=embed_dim, num_experts=num_experts, num_experts_per_tok=num_experts_per_tok)
@@ -256,8 +290,8 @@ class SparseMoeBlock(nn.Module):
             intermediate_size =  embed_dim * self.n_shared_experts
             self.shared_experts = MoeMLP(hidden_size = embed_dim, intermediate_size = intermediate_size, pretraining_tp=pretraining_tp)
         self.cache_key = layer_idx
-        self.ep_async_op = ep_async_op
-        self.ep = ep
+        assert para_mode is not None
+        self.para_mode = para_mode
         
     def forward(self, hidden_states):
         identity = hidden_states
@@ -278,7 +312,7 @@ class SparseMoeBlock(nn.Module):
             y =  y.view(*orig_shape)
             y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
-            if not self.ep:
+            if not PARA_MODE.is_ep(self.para_mode):
                 y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
             else:
                 from expertpara.ep_fwd import moe_infer_ep
@@ -288,7 +322,7 @@ class SparseMoeBlock(nn.Module):
                     flat_expert_indices=flat_topk_idx,
                     flat_expert_weights=topk_weight.view(-1, 1),
                     num_experts_per_tok=self.num_experts_per_tok,
-                    async_op=self.ep_async_op,
+                    async_op=PARA_MODE.async_op(self.para_mode),
                     cache_key=self.cache_key,
                 ).view(*orig_shape)
         if self.n_shared_experts is not None:
@@ -298,7 +332,7 @@ class SparseMoeBlock(nn.Module):
 
     @torch.no_grad()
     def moe_infer(self, x, flat_expert_indices, flat_expert_weights):
-        assert not self.ep and self.ep_async_op is None
+        assert not PARA_MODE.is_ep(self.para_mode)
         expert_cache = torch.zeros_like(x) 
         idxs = flat_expert_indices.argsort()
         tokens_per_expert = flat_expert_indices.bincount().cpu().numpy().cumsum(0)
@@ -405,17 +439,29 @@ class DiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4,
         num_experts=8, num_experts_per_tok=2, pretraining_tp=2, 
-        use_flash_attn=False, layer_idx=None, ep=True, ep_async_op=None,**block_kwargs
+        use_flash_attn=False, layer_idx=None, para_mode=None,**block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         if use_flash_attn: 
-            raise RuntimeError("FlashAttention is not supported in this version.")
-            self.attn = FlashSelfMHAModified(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=True)
+            if PARA_MODE.is_sp(para_mode):
+                from seqpara.sp_fwd import FlashSelfMHAModifiedSP
+                self.attn = FlashSelfMHAModifiedSP(
+                    hidden_size,
+                    num_heads=num_heads,
+                    qkv_bias=True,
+                    qk_norm=True,
+                    layer_idx=layer_idx,
+                    async_op=PARA_MODE.async_op(para_mode),
+                )
+            else:
+                self.attn = FlashSelfMHAModified(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=True)
         else:
-            # self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
-            from seqpara.sp_fwd import AttentionSP
-            self.attn = AttentionSP(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
+            if PARA_MODE.is_sp(para_mode):
+                from seqpara.sp_fwd import AttentionSP
+                self.attn = AttentionSP(hidden_size, num_heads=num_heads, qkv_bias=True, layer_idx=layer_idx, async_op=PARA_MODE.async_op(para_mode), **block_kwargs)
+            else:
+                self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
         approx_gelu = lambda: nn.GELU(approximate="tanh")
@@ -427,8 +473,7 @@ class DiTBlock(nn.Module):
             num_experts_per_tok,
             pretraining_tp,
             layer_idx=layer_idx,
-            ep=ep,
-            ep_async_op=ep_async_op,
+            para_mode=para_mode,
         )
 
         self.adaLN_modulation = nn.Sequential(
@@ -482,8 +527,7 @@ class DiT(nn.Module):
         pretraining_tp=2,
         learn_sigma=True,
         use_flash_attn=False,
-        ep=True,
-        ep_async_op=None,
+        para_mode=None,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -511,14 +555,15 @@ class DiT(nn.Module):
                     pretraining_tp,
                     use_flash_attn,
                     layer_idx=i,
-                    ep=ep,
-                    ep_async_op=ep_async_op,
+                    para_mode=para_mode,
                 )
                 for i in range(depth)
             ]
         )
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
         self.initialize_weights()
+        assert para_mode is not None
+        self.para_mode = para_mode
 
     def initialize_weights(self):
         # Initialize transformer layers:
@@ -584,15 +629,17 @@ class DiT(nn.Module):
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
-        """
-        NOTE: SEQUENCE PARALLELISM STARTS HERE
-        """
-        from seqpara.sp_fwd import sp_scatter, sp_all_gather, sp_broadcast
-        x = sp_scatter(x)
-        c = sp_broadcast(c)
+        if PARA_MODE.is_sp(self.para_mode):
+            """
+            NOTE: SEQUENCE PARALLELISM STARTS HERE
+            """
+            from seqpara.sp_fwd import sp_scatter, sp_all_gather, sp_broadcast
+            x = sp_scatter(x)
+            c = sp_broadcast(c)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
-        x = sp_all_gather(x,concat_dim=1)
+        if PARA_MODE.is_sp(self.para_mode):
+            x = sp_all_gather(x,concat_dim=1)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
@@ -614,7 +661,6 @@ class DiT(nn.Module):
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1) 
-    
 
 
 #################################################################################

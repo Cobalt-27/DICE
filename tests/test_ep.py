@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from expertpara.ep_fwd import moe_infer_ep
-from expertpara.diep import cache_init
+from expertpara.diep import ep_cache_init
 import random
 import socket
 import time
@@ -85,7 +85,7 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
     
     # Run the _infer_grouped function
     prev_out = []
-    cache_init(1)
+    ep_cache_init(1)
     for i in range(n_iter):
         inp = torch.randn(n_tokens, hidden_size).to(device)
         flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)

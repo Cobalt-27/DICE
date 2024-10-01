@@ -25,6 +25,17 @@ case $choice in
         ;;
 esac
 
+echo "Select para_mode: 1) none    2) ep    3) diep    4) sp    5) df"
+read -p "Enter choice [1-5]: " para_choice
+
+para_modes=("none" "ep" "diep" "sp" "df")
+if [[ $para_choice -ge 1 && $para_choice -le 5 ]]; then
+    para_mode=${para_modes[$((para_choice-1))]}
+else
+    echo "Invalid choice. Exiting."
+    exit 1
+fi
+
 vae_path="/mnt/vae"
 num_experts=8
 image_size=256
@@ -32,24 +43,13 @@ image_size=256
 read -p "Enter world size (default 2): " world_size
 world_size=${world_size:-2}
 
-read -p "Enter number of sampling steps (invalid for XL&G, default 500): " num_sample_steps
-num_sample_steps=${num_sample_steps:-500}
-
-read -p "Enter CFG scale (default 1.5): " cfg_scale
-cfg_scale=${cfg_scale:-1.5}
-
 read -p "Enter per-process batch size (default 4): " per_proc_batch_size
 per_proc_batch_size=${per_proc_batch_size:-4}
 
-# Initialize extra_args as an empty string
-extra_args=""
 
 # Ask the user if they want to include optional arguments
-read -p "Use --diep? (y/n, default n): " use_diep
-use_diep=${use_diep:-n}
-if [ "$use_diep" = "y" ]; then
-    extra_args+=" --diep"
-fi
+# Initialize extra_args as an empty string
+extra_args=""
 
 read -p "Use --auto-gc? (y/n, default n): " use_auto_gc
 use_auto_gc=${use_auto_gc:-n}
@@ -81,6 +81,12 @@ if [ -n "$cache_stride" ]; then
     extra_args+=" --cache-stride $cache_stride"
 fi
 
+read -p "Enter number of sampling steps (invalid for XL&G, default 500): " num_sample_steps
+num_sample_steps=${num_sample_steps:-500}
+
+read -p "Enter CFG scale (default 1.5): " cfg_scale
+cfg_scale=${cfg_scale:-1.5}
+
 read -p "Enter number of FID samples (default $((per_proc_batch_size * world_size))): " fid_samples
 fid_samples=${fid_samples:-$((per_proc_batch_size * world_size))}
 
@@ -99,4 +105,5 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --num-sampling-steps $num_sample_steps \
 --num-fid-samples $fid_samples \
 --tf32 \
+--para-mode $para_mode \
 $extra_args

@@ -10,7 +10,7 @@ import pytest
 from seqpara.sp_fwd import AttentionSP
 
 
-class AttentionSingleNode(nn.Module):
+class AttnTest(nn.Module):
     def __init__(
             self,
             dim: int,
@@ -110,7 +110,7 @@ def run_attention_test(rank, world_size, port, seed):
     # Run original Attention on the full input (only on rank 0)
     if rank == 0:
         # Create the original Attention module
-        attn = AttentionSingleNode(dim=D, num_heads=num_heads, attn=attn_sp).to(device)
+        attn = AttnTest(dim=D, num_heads=num_heads, attn=attn_sp).to(device)
 
         output = attn(x)  # Shape: [N, T_total, D]
         # Compare outputs
