@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from .sp_cache import AllGatherCache
 from .sp_fwd import sp_all_gather
+from cudaprof.prof import CudaProfiler
 
 _kcache = None
 _vcache = None
@@ -31,7 +32,8 @@ def _all_gather_async(x_local,key, cache, concat_dim):
     
     prev_handle, prev_x_list, prev_x = cache.get(key)
     if prev_handle is not None:
-        prev_handle.wait()
+        with CudaProfiler.scope("all_gather.wait"):
+            prev_handle.wait()
     """
     NOTE: prev_x_list are kv tensors in previous step, have to replace the current rank's tensor with the new one
     """

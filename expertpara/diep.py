@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
-from .prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 from .ep_cache import All2AllCache
 """
 DiEP: Diffusion model with async Expert Parallelism
@@ -98,9 +98,9 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         prev_flat_expert_weights,
         prev_send_buf
         ) = _diep_cache_dispatch.get(cache_key)
-    CudaProfiler.prof().start('dispatch_wait')
+    CudaProfiler.prof().start('global_dispatch.wait')
     _wait(prev_handles)
-    CudaProfiler.prof().stop('dispatch_wait')
+    CudaProfiler.prof().stop('global_dispatch.wait')
     # async all2all, to be received in next step
     buf, handles = global_dispatch(
         grouped_dup_inp=grouped_dup_inp,
@@ -139,9 +139,9 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         prev_flat_expert_weights,
         prev_send_buf
         ) = _diep_cache_combine.get(cache_key)
-    CudaProfiler.prof().start('combine_wait')
+    CudaProfiler.prof().start('global_combine.wait')
     _wait(prev_handles)
-    CudaProfiler.prof().stop('combine_wait')
+    CudaProfiler.prof().stop('global_combine.wait')
     # async all2all, to be received in next step
     buf, handles = global_combine(
         grouped_dup_outp=grouped_dup_outp,

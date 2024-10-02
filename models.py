@@ -15,6 +15,7 @@ import numpy as np
 import math
 from timm.models.vision_transformer import PatchEmbed, Attention, Mlp
 from expertpara.etrim import trim_module_list
+from cudaprof.prof import CudaProfiler
 
 import torch.nn.functional as F
 
@@ -281,7 +282,6 @@ class SparseMoeBlock(nn.Module):
         if PARA_MODE.is_ep(para_mode):
             # trim unused experts if expertpara is enabled
             self.experts = trim_module_list(self.experts, num_experts)
-        
         self.gate = MoEGate(embed_dim=embed_dim, num_experts=num_experts, num_experts_per_tok=num_experts_per_tok)
         self.n_shared_experts = 2
         
@@ -295,7 +295,8 @@ class SparseMoeBlock(nn.Module):
     def forward(self, hidden_states):
         identity = hidden_states
         orig_shape = hidden_states.shape
-        topk_idx, topk_weight, aux_loss = self.gate(hidden_states) 
+        with CudaProfiler.scope("moe.gate"):
+            topk_idx, topk_weight, aux_loss = self.gate(hidden_states) 
         # print(topk_idx.tolist(), print(len(topk_idx.tolist()))) 
         # global selected_ids_list
         # selected_ids_list.append(topk_idx.tolist())
@@ -343,7 +344,8 @@ class SparseMoeBlock(nn.Module):
             expert = self.experts[i]
             exp_token_idx = token_idxs[start_idx:end_idx]
             expert_tokens = x[exp_token_idx]
-            expert_out = expert(expert_tokens)
+            with CudaProfiler.scope("moe.mlp"):
+                expert_out = expert(expert_tokens)
             expert_out.mul_(flat_expert_weights[idxs[start_idx:end_idx]]) 
             
             # for fp16 and other dtype
@@ -482,8 +484,10 @@ class DiTBlock(nn.Module):
 
     def forward(self, x, c):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
-        x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa)) 
-        x = x + gate_mlp.unsqueeze(1) * self.moe(modulate(self.norm2(x), shift_mlp, scale_mlp))
+        with CudaProfiler.scope("attn"):
+            x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa)) 
+        with CudaProfiler.scope("moe"):
+            x = x + gate_mlp.unsqueeze(1) * self.moe(modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
 

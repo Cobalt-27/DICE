@@ -29,7 +29,7 @@ class AllGatherCache:
         """ 
         self.auto_gc = auto_gc
         self.cache = {}
-
+    
     def clear(self):
         self.cache = {}
 

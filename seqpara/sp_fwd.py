@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
+from cudaprof.prof import CudaProfiler
 
 class FlashSelfMHAModifiedSP(nn.Module):
     """
@@ -65,14 +66,15 @@ class FlashSelfMHAModifiedSP(nn.Module):
         NOTE:
         Sequence Parallelism: All-gather K and V from all processes.
         """
-        if self.async_op:
-            from .df import sp_all_gather_async
-            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key, concat_dim=1)
-        else:
-            k_all = sp_all_gather(k, concat_dim=1)
-            v_all = sp_all_gather(v, concat_dim=1)
-        assert k_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"k_all shape mismatch: {k_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
-        assert v_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"v_all shape mismatch: {v_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
+        with CudaProfiler.scope("all_gather"):
+            if self.async_op:
+                from .df import sp_all_gather_async
+                k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key, concat_dim=1)
+            else:
+                k_all = sp_all_gather(k, concat_dim=1)
+                v_all = sp_all_gather(v, concat_dim=1)
+            assert k_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"k_all shape mismatch: {k_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
+            assert v_all.shape == (b, s*world_size, self.num_heads, self.head_dim), f"v_all shape mismatch: {v_all.shape}!=({b}, {s*world_size}, {self.num_heads}, {self.head_dim})"
 
         kv = torch.stack([k_all, v_all], dim=2)     # [b, s, 2, h, d]
         context = self.inner_attn(q,kv)
@@ -231,8 +233,9 @@ def sp_all_gather(x_local, concat_dim, async_op=False):
     # Prepare a list to gather the local tensors from all ranks
     x_gather_list = [torch.zeros_like(x_local).contiguous() for _ in range(world_size)]
 
-    # Perform all_gather to gather from all ranks
-    handle = dist.all_gather(tensor_list=x_gather_list, tensor=x_local, async_op=async_op)
+    with CudaProfiler.scope("all_gather.call_dist"):
+        # Perform all_gather to gather from all ranks
+        handle = dist.all_gather(tensor_list=x_gather_list, tensor=x_local, async_op=async_op)
     
     if async_op:
         assert concat_dim is None, "Cannot concatenate tensors in async mode."

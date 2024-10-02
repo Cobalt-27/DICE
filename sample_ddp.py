@@ -24,7 +24,7 @@ from PIL import Image
 import numpy as np
 import math
 import argparse
-from expertpara.prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
 from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init
@@ -141,11 +141,16 @@ def main(args):
     pbar = tqdm(pbar) if rank == 0 else pbar
     total = 0
     prof_path = os.path.join(sample_folder_dir, "prof.txt")
-    if rank == 0 and os.path.exists(prof_path):
-        os.remove(prof_path)
+    mem_summary_path = os.path.join(sample_folder_dir, "mem.txt")
+    if rank == 0:
+        if os.path.exists(prof_path):
+            os.remove(prof_path)
+        if os.path.exists(mem_summary_path):
+            os.remove(mem_summary_path)
     # Ensure the profile path exists
     if rank == 0:
         os.makedirs(os.path.dirname(prof_path), exist_ok=True)
+        os.makedirs(os.path.dirname(mem_summary_path), exist_ok=True)
     
     if rank == 0:
         args_path = os.path.join(sample_folder_dir, "args.txt")
@@ -209,7 +214,7 @@ def main(args):
         torch.cuda.synchronize()
         time_end = time.time()
             
-            
+        mem_summary = torch.cuda.memory_summary() + "\n"
         mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
         measured_total_time_line = f"Measured time: {(time_end - time_start):.2f}s"
         prof_lines += [mem_usage_line, measured_total_time_line]
@@ -238,6 +243,8 @@ def main(args):
             with open(prof_path, "a") as f:
                 f.writelines([line + "\n" for line in prof_lines])
             print("\n".join(prof_lines))
+            with open(mem_summary_path, "a") as f:
+                f.write(mem_summary)
         torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz

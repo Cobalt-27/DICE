@@ -1,4 +1,4 @@
-from .prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 import os
 def analyse_prof(profiler: CudaProfiler):
     """

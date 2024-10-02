@@ -1,6 +1,6 @@
 import torch
 from .offload import AsyncTensorOffloading
-from .prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 
 """
 Cache structure:

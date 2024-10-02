@@ -1,5 +1,5 @@
 import torch
-from .prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 class AsyncTensorOffloading:
     """
     Used to offload tensors between CPU and GPU asynchronously.

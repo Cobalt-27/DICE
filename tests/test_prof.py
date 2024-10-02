@@ -1,6 +1,6 @@
 import torch
 import pytest
-from expertpara.prof import CudaProfiler
+from cudaprof.prof import CudaProfiler
 import random
 from .utils import set_seed
 
