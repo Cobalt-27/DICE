@@ -58,7 +58,7 @@ def main(args):
     assert torch.cuda.is_available(), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
     torch.set_grad_enabled(False)
 
-    # Setup DDP:
+    # Setup dist
     dist.init_process_group("nccl")
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
@@ -170,7 +170,7 @@ def main(args):
     elif args.para_mode == PARA_MODE.DF:
         sp_cache_init(auto_gc=True)
     
-    for _ in pbar:
+    for iter in pbar:
         CudaProfiler.prof().reset()
         # Sample images:
         if args.para_mode == PARA_MODE.DIEP:
@@ -178,23 +178,20 @@ def main(args):
         elif args.para_mode == PARA_MODE.DF:
             sp_cache_clear()
         prof_lines=[]
-        if dtype == torch.float16: 
+        z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
+        y = torch.randint(0, args.num_classes, (n,), device=device)
+        
+        torch.cuda.synchronize()
+        time_start = time.time()
+        CudaProfiler.prof().start('total')
+        if rf: 
             # use rf
             with torch.autocast(device_type='cuda'):
                 STEPSIZE = 50
-                init_noise = torch.randn(n, model.in_channels, latent_size, latent_size, device=device) 
-                conds = torch.randint(0, args.num_classes, (n,), device=device)
-                torch.cuda.synchronize()
-                time_start = time.time()
-                CudaProfiler.prof().start('total')
+                init_noise = z
+                conds = y
                 samples = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * n).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
-                CudaProfiler.prof().stop('total')
-                torch.cuda.synchronize()
-                time_end = time.time()
         else:
-            z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
-            y = torch.randint(0, args.num_classes, (n,), device=device)
-
             # Setup classifier-free guidance:
             if using_cfg:
                 z = torch.cat([z, z], 0)
@@ -205,30 +202,23 @@ def main(args):
             else:
                 model_kwargs = dict(y=y)
                 sample_fn = model.forward
-            torch.cuda.synchronize()
-            time_start = time.time()
-            CudaProfiler.prof().start('total')
             samples = diffusion.p_sample_loop(
                 sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
             )
-            CudaProfiler.prof().stop('total')
-            torch.cuda.synchronize()
-            time_end = time.time()
+        CudaProfiler.prof().stop('total')
+        torch.cuda.synchronize()
+        time_end = time.time()
             
             
         mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
-        measured_total_time_line = f"Measured total time of all passed iters: {(time_end - time_start):.2f}s"
+        measured_total_time_line = f"Measured time: {(time_end - time_start):.2f}s"
         prof_lines += [mem_usage_line, measured_total_time_line]
         
         if args.trim_samples:
             samples = samples[:samples.shape[0] // n] # keep only one sample per batch
-        if dtype == torch.float16:
-            samples = vae.decode(samples / 0.18215).sample # only the last one is needed
-        else:
-            if using_cfg:
-                samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-            samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
-        
+        if not rf and using_cfg:
+            samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+        samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
         
         # Save samples to disk as individual .png files

@@ -635,10 +635,19 @@ class DiT(nn.Module):
             from seqpara.sp_fwd import sp_scatter, sp_all_gather, sp_broadcast
             x = sp_scatter(x)
             c = sp_broadcast(c)
+            
+        
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
         if PARA_MODE.is_sp(self.para_mode):
             x = sp_all_gather(x,concat_dim=1)
+        """
+        NOTE:
+        The sampling algorithm outside needs some results to be returned.
+        We have to return some stuff, even when using SP and rank != 0.
+        For non-zero ranks in SP, we simply go through the forward pass, returning with a meaningless value.
+        This should not affect the overall performance since the last layers takes marginal time and the rank 0 is also blocked here.
+        """
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x

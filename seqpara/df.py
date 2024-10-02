@@ -25,13 +25,17 @@ def sp_cache_clear():
 def _all_gather_async(x_local,key, cache, concat_dim):
     if not cache.contains(key):
         x_list = sp_all_gather(x_local=x_local, concat_dim=None, async_op=False)
-        cache.put(key, (None, x_list, x_local))
         x_all = torch.cat(x_list, dim=concat_dim)
+        cache.put(key, (None, x_list, x_local))
         return x_all
     
     prev_handle, prev_x_list, prev_x = cache.get(key)
     if prev_handle is not None:
         prev_handle.wait()
+    """
+    NOTE: prev_x_list are kv tensors in previous step, have to replace the current rank's tensor with the new one
+    """
+    assert prev_x_list[dist.get_rank()] is None
     prev_x_list[dist.get_rank()] = x_local
     x_all = torch.cat(prev_x_list, dim=concat_dim)
     x_list, handle = sp_all_gather(x_local=x_local, concat_dim=None, async_op=True)

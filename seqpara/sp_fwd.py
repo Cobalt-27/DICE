@@ -144,7 +144,7 @@ class AttentionSP(nn.Module):
         """
         if self.async_op:
             from .df import sp_all_gather_async
-            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key)
+            k_all, v_all = sp_all_gather_async(k, v, key=self.cache_key, concat_dim=2)
         else:
             k_all = sp_all_gather(k, concat_dim=2)
             v_all = sp_all_gather(v, concat_dim=2)

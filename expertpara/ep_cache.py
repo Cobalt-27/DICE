@@ -112,7 +112,7 @@ class All2AllCache:
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
             recv_buf = recv_buf.wait()
-             
+            
         value[RECV_BUF_IDX] = recv_buf
         self.cache[idx] = tuple(value)
 
@@ -193,22 +193,15 @@ class All2AllCache:
         Returns the size of all the tensors in the cache in bytes.
         """
         return sum(
-            [
-                sum(
-                    [
-                        (
-                            x.element_size() * x.numel()
-                            if isinstance(x, torch.Tensor)
-                            else (
-                                x.gpu_mem_size()
-                                if isinstance(x, AsyncTensorOffloading)
-                                else 0
-                            )
-                        )
-                        for x in v
-                    ]
+            sum(
+                (
+                    x.element_size() * x.numel()
+                    if isinstance(x, torch.Tensor)
+                    else (
+                        x.gpu_mem_size() if isinstance(x, AsyncTensorOffloading) else 0
+                    )
                 )
-                for v in self.cache
-                if v is not None
-            ]
+                for x in v
+            )
+            for v in self.cache
         )

@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 """
 Cache structure:
 
@@ -34,13 +35,15 @@ class AllGatherCache:
 
     def put(self, key, value):
         assert isinstance(key, int) and len(value) == ENTRY_VAL_LEN
-        if value is not None:
-            """
-            The send buf is tensor, the recv buf is a list of tensors
-            """
-            assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor) and value[SEND_BUF_IDX].is_contiguous()
-            assert isinstance(value[RECV_BUF_IDX], list) 
-            assert all(tensor.is_contiguous() for tensor in value[RECV_BUF_IDX])
+        """
+        The send buf is tensor, the recv buf is a list of tensors
+        """
+        assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor) and value[SEND_BUF_IDX].is_contiguous()
+        assert isinstance(value[RECV_BUF_IDX], list) 
+        assert all(tensor.is_contiguous() for tensor in value[RECV_BUF_IDX])
+        if value[HANDLES_IDX] is None:
+            value[RECV_BUF_IDX][dist.get_rank()] = None
+        
         if self.auto_gc:
             self._gc()
         self.cache[key] = value
@@ -56,11 +59,28 @@ class AllGatherCache:
 
     def _gc(self):
         """
-        If an async all2all operation is completed, clear the send buffer.
+        If an async all2all operation is completed, clear the send buffer and the recv buffer of the rank.
         """
-        # TODO: gc
-        pass
+        for key, value in self.cache.items():
+            if value[SEND_BUF_IDX] is None:
+                continue
+            if value[HANDLES_IDX] is not None and value[HANDLES_IDX].is_completed():
+                value = list(value)
+                value[SEND_BUF_IDX] = None
+                # no need to keep recv buf belonging to this rank, since it will be overwritten in the next step
+                value[RECV_BUF_IDX][dist.get_rank()] = None
+                self.cache[key] = tuple(value)
     
     def tensors_size(self):
-        return 0
+        """
+        return the total size of all tensors in bytes
+        """
+        size = 0
+        for key, value in self.cache.items():
+            if value[SEND_BUF_IDX] is not None:
+                size += value[SEND_BUF_IDX].numel() * value[SEND_BUF_IDX].element_size()
+            for tensor in value[RECV_BUF_IDX]:
+                if tensor is not None:
+                    size += tensor.numel() * tensor.element_size()
+        return size
 
