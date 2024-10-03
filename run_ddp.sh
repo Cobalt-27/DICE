@@ -31,20 +31,35 @@ case $choice in
         exit 1
         ;;
 esac
-
-echo "Select para_mode: 1) dp    2) ep    3) diep    4) sp    5) df    6)diep+df"
-read -p "Enter choice [1-6]: " para_choice
-
-para_modes=("dp" "ep" "diep" "sp" "df" "diepdf")
-if [[ $para_choice -ge 1 && $para_choice -le 6 ]]; then
-    para_mode=${para_modes[$((para_choice-1))]}
-else
-    echo "Invalid choice. Exiting."
-    exit 1
-fi
-
 vae_path="/mnt/vae"
 image_size=256
+extra_args=""
+
+read -p "Use --ep? (y/n, default n): " use_ep
+use_ep=${use_ep:-n}
+if [ "$use_ep" = "y" ]; then
+    extra_args+=" --ep"
+fi
+
+read -p "Use --ep-async? (y/n, default n): " use_ep_async
+use_ep_async=${use_ep_async:-n}
+if [ "$use_ep_async" = "y" ]; then
+    extra_args+=" --ep-async"
+fi
+
+read -p "Use --sp? (y/n, default n): " use_sp
+use_sp=${use_sp:-n}
+if [ "$use_sp" = "y" ]; then
+    extra_args+=" --sp"
+fi
+
+read -p "Use --sp-async? (y/n, default n): " use_sp_async
+use_sp_async=${use_sp_async:-n}
+if [ "$use_sp_async" = "y" ]; then
+    extra_args+=" --sp-async"
+fi
+
+
 
 read -p "Enter world size (default 2): " world_size
 world_size=${world_size:-2}
@@ -55,7 +70,9 @@ per_proc_batch_size=${per_proc_batch_size:-4}
 
 # Ask the user if they want to include optional arguments
 # Initialize extra_args as an empty string
-extra_args=""
+
+
+
 
 read -p "Use --auto-gc? (y/n, default n): " use_auto_gc
 use_auto_gc=${use_auto_gc:-n}
@@ -96,9 +113,11 @@ cfg_scale=${cfg_scale:-1.5}
 read -p "Enter number of FID samples (default $((per_proc_batch_size * world_size))): " fid_samples
 fid_samples=${fid_samples:-$((per_proc_batch_size * world_size))}
 
-read -p "Enter CUDA visible devices (default 0,1): " cuda_visible_devices
-cuda_visible_devices=${cuda_visible_devices:-0,1}
-export CUDA_VISIBLE_DEVICES=$cuda_visible_devices
+read -p "Enter CUDA visible devices (default all): " cuda_visible_devices
+cuda_visible_devices=${cuda_visible_devices:-all}
+if [ "$cuda_visible_devices" != "all" ]; then
+    export CUDA_VISIBLE_DEVICES=$cuda_visible_devices
+fi
 
 torchrun --nproc_per_node $world_size sample_ddp.py \
 --per-proc-batch-size $per_proc_batch_size \
@@ -111,5 +130,4 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --num-sampling-steps $num_sample_steps \
 --num-fid-samples $fid_samples \
 --tf32 \
---para-mode $para_mode \
 $extra_args

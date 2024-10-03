@@ -31,41 +31,38 @@ except Exception as e:
     print(f'flash_attn import failed: {e}')
 
 
-# selected_ids_list = []
-from enum import Enum
-class PARA_MODE(Enum):
+class ParaMode():
+    def __init__(self, ep=False, ep_async=False, sp=False, sp_async=False):
+        self.ep = ep
+        self.ep_async = ep_async
+        if ep_async:
+            assert ep
+        self.sp = sp
+        self.sp_async = sp_async
+        if sp_async:
+            assert sp
+        if not ep and not sp:
+            self.dp = True
+        else:
+            self.dp = False
+            
+    def verbose(self):
+        if self.dp:
+            return "DP"
+        name = []
+        if self.ep:
+            if self.ep_async:
+                name += ['DiEP']
+            else:
+                name += ['EP']
+        if self.sp:
+            if self.sp_async:
+                name += ['DF']
+            else:
+                name += ['SP']
+        return "+".join(name)
+            
     
-    DP = "dp"
-    SP = "sp"
-    EP = "ep"
-    DIEP = "diep"
-    DF = "df"
-    DIEP_DF = "diepdf"
-    
-    @staticmethod
-    def is_ep(val):
-        """
-        check if the mode is expert-parallel
-        """
-        assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.EP or val == PARA_MODE.DIEP or val == PARA_MODE.DIEP_DF
-    
-    @staticmethod
-    def is_sp(val):
-        """
-        check if the mode is sequence-parallel
-        """
-        assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.SP or val == PARA_MODE.DF or val == PARA_MODE.DIEP_DF
-    
-    @staticmethod
-    def async_op(val):
-        """
-        check if the mode is asynchronous parallelism
-        """
-        assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.DIEP or val == PARA_MODE.DF or val == PARA_MODE.DIEP_DF
-
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
@@ -272,7 +269,7 @@ class SparseMoeBlock(nn.Module):
     """
     A mixed expert module containing shared experts.
     """
-    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, para_mode=None):
+    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, para_mode:ParaMode = None):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
@@ -280,7 +277,7 @@ class SparseMoeBlock(nn.Module):
         """
         NOTE: trim unused experts, for ep only
         """
-        if PARA_MODE.is_ep(para_mode):
+        if para_mode.ep:
             # trim unused experts if expertpara is enabled
             self.experts = trim_module_list(self.experts, num_experts)
         self.gate = MoEGate(embed_dim=embed_dim, num_experts=num_experts, num_experts_per_tok=num_experts_per_tok)
@@ -313,7 +310,7 @@ class SparseMoeBlock(nn.Module):
             y =  y.view(*orig_shape)
             y = AddAuxiliaryLoss.apply(y, aux_loss)
         else:
-            if not PARA_MODE.is_ep(self.para_mode):
+            if not self.para_mode.ep:
                 y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
             else:
                 from expertpara.ep_fwd import moe_infer_ep
@@ -323,7 +320,7 @@ class SparseMoeBlock(nn.Module):
                     flat_expert_indices=flat_topk_idx,
                     flat_expert_weights=topk_weight.view(-1, 1),
                     num_experts_per_tok=self.num_experts_per_tok,
-                    async_op=PARA_MODE.async_op(self.para_mode),
+                    async_op=self.para_mode.ep_async,
                     cache_key=self.cache_key,
                 ).view(*orig_shape)
         if self.n_shared_experts is not None:
@@ -333,7 +330,7 @@ class SparseMoeBlock(nn.Module):
 
     @torch.no_grad()
     def moe_infer(self, x, flat_expert_indices, flat_expert_weights):
-        assert not PARA_MODE.is_ep(self.para_mode)
+        assert not self.para_mode.ep
         expert_cache = torch.zeros_like(x) 
         idxs = flat_expert_indices.argsort()
         tokens_per_expert = flat_expert_indices.bincount().cpu().numpy().cumsum(0)
@@ -441,12 +438,12 @@ class DiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4,
         num_experts=8, num_experts_per_tok=2, pretraining_tp=2, 
-        use_flash_attn=False, layer_idx=None, para_mode=None,**block_kwargs
+        use_flash_attn=False, layer_idx=None, para_mode:ParaMode=None,**block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         if use_flash_attn: 
-            if PARA_MODE.is_sp(para_mode):
+            if para_mode.sp:
                 from seqpara.sp_fwd import FlashSelfMHAModifiedSP
                 self.attn = FlashSelfMHAModifiedSP(
                     hidden_size,
@@ -454,14 +451,14 @@ class DiTBlock(nn.Module):
                     qkv_bias=True,
                     qk_norm=True,
                     layer_idx=layer_idx,
-                    async_op=PARA_MODE.async_op(para_mode),
+                    async_op=para_mode.sp_async,
                 )
             else:
                 self.attn = FlashSelfMHAModified(hidden_size, num_heads=num_heads, qkv_bias=True, qk_norm=True)
         else:
-            if PARA_MODE.is_sp(para_mode):
+            if para_mode.sp:
                 from seqpara.sp_fwd import AttentionSP
-                self.attn = AttentionSP(hidden_size, num_heads=num_heads, qkv_bias=True, layer_idx=layer_idx, async_op=PARA_MODE.async_op(para_mode), **block_kwargs)
+                self.attn = AttentionSP(hidden_size, num_heads=num_heads, qkv_bias=True, layer_idx=layer_idx, async_op=para_mode.sp_async, **block_kwargs)
             else:
                 self.attn = Attention(hidden_size, num_heads=num_heads, qkv_bias=True, **block_kwargs)
         self.norm2 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -531,7 +528,7 @@ class DiT(nn.Module):
         pretraining_tp=2,
         learn_sigma=True,
         use_flash_attn=False,
-        para_mode=None,
+        para_mode:ParaMode=None,
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -633,7 +630,7 @@ class DiT(nn.Module):
         t = self.t_embedder(t)                   # (N, D)
         y = self.y_embedder(y, self.training)    # (N, D)
         c = t + y                                # (N, D)
-        if PARA_MODE.is_sp(self.para_mode):
+        if self.para_mode.sp:
             """
             NOTE: SEQUENCE PARALLELISM STARTS HERE
             """
@@ -644,7 +641,7 @@ class DiT(nn.Module):
         
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
-        if PARA_MODE.is_sp(self.para_mode):
+        if self.para_mode.sp:
             x = sp_all_gather(x,concat_dim=1)
         """
         NOTE:
