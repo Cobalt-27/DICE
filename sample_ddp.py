@@ -83,26 +83,32 @@ def main(args):
         dtype = torch.float32
     # Load model:
     latent_size = args.image_size // 8
-    model = DiT_models[args.model](
-        input_size=latent_size,
-        num_classes=args.num_classes,
-        num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
-        pretraining_tp=pretraining_tp,
-        use_flash_attn=use_flash_attn,
-        para_mode=args.para_mode,
-    ).to(device)
     
-    if dtype == torch.float16:
-        model = model.half()
-    # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
-    ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
-    state_dict = find_model(ckpt_path)
-    if PARA_MODE.is_ep(args.para_mode):
-        """
-        NOTE: trim unused experts, for ep only
-        """
-        state_dict = trim_state_dict(state_dict, args.num_experts)
-    model.load_state_dict(state_dict)
+    for i in range(dist.get_world_size()): # load model one by one to save memory, will this help?
+        if i == rank:
+            model = DiT_models[args.model](
+                input_size=latent_size,
+                num_classes=args.num_classes,
+                num_experts=args.num_experts, # NOTE: should be added, otherwise expert num will be set to default 8
+                pretraining_tp=pretraining_tp,
+                use_flash_attn=use_flash_attn,
+                para_mode=args.para_mode,
+            )
+            if dtype == torch.float16:
+                model = model.half()
+            model.to(device)
+            # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
+            ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
+            state_dict = find_model(ckpt_path)
+            if PARA_MODE.is_ep(args.para_mode):
+                """
+                NOTE: trim unused experts, for ep only
+                """
+                state_dict = trim_state_dict(state_dict, args.num_experts)
+            model.load_state_dict(state_dict)
+            print(f"Model loaded on rank {rank}.")
+            del state_dict
+        dist.barrier()
     
     model.eval()  # important!
     if rf:
@@ -161,7 +167,7 @@ def main(args):
             formatted_args = json.dumps(args_dict, indent=4)
             f.write(formatted_args)
 
-    if args.para_mode == PARA_MODE.DIEP:
+    if PARA_MODE.is_ep(args.para_mode) and PARA_MODE.async_op(args.para_mode):
         if args.offload and args.cache_stride is not None:
             strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
         
@@ -172,15 +178,15 @@ def main(args):
             prefetch_size=args.cache_prefetch,
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
         )
-    elif args.para_mode == PARA_MODE.DF:
+    if PARA_MODE.is_sp(args.para_mode) and PARA_MODE.async_op(args.para_mode):
         sp_cache_init(auto_gc=True)
     
     for iter in pbar:
         CudaProfiler.prof().reset()
         # Sample images:
-        if args.para_mode == PARA_MODE.DIEP:
+        if PARA_MODE.is_ep(args.para_mode) and PARA_MODE.async_op(args.para_mode):
             ep_cache_clear()
-        elif args.para_mode == PARA_MODE.DF:
+        if PARA_MODE.is_sp(args.para_mode) and PARA_MODE.async_op(args.para_mode):
             sp_cache_clear()
         prof_lines=[]
         z = torch.randn(n, model.in_channels, latent_size, latent_size, device=device)
@@ -233,11 +239,11 @@ def main(args):
         total += global_batch_size
 
         if rank == 0:
-            cache_line = "No cache used."
-            if args.para_mode == PARA_MODE.DIEP:
-                cache_line = f"Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
-            elif args.para_mode == PARA_MODE.DF:
-                cache_line = f"Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
+            cache_line = ""
+            if PARA_MODE.is_ep(args.para_mode) and PARA_MODE.async_op(args.para_mode):
+                cache_line += f"\nEP Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
+            if PARA_MODE.is_sp(args.para_mode) and PARA_MODE.async_op(args.para_mode):
+                cache_line += f"\nSP Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
             prof_lines.append(cache_line)
             prof_lines+=analyse_prof(CudaProfiler.prof())
             with open(prof_path, "a") as f:

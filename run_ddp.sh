@@ -4,8 +4,10 @@ echo "Select model:"
 echo "1) DiT-XL/2"
 echo "2) DiT-B/2"
 echo "3) DiT-S/2"
-read -p "Enter choice [1-3]: " choice
+echo "4) DiT-G/2"
+read -p "Enter choice [1-4]: " choice
 
+num_experts=8
 case $choice in
     1)
         model="DiT-XL/2"
@@ -19,17 +21,22 @@ case $choice in
         model="DiT-S/2"
         ckpt_path="/mnt/dit_moe_s_8E2A.pt"
         ;;
+    4)
+        model="DiT-G/2"
+        ckpt_path="/root/autodl-tmp/dit_moe_g_16E2A.pt"
+        num_experts=16
+        ;;
     *)
         echo "Invalid choice. Exiting."
         exit 1
         ;;
 esac
 
-echo "Select para_mode: 1) dp    2) ep    3) diep    4) sp    5) df"
-read -p "Enter choice [1-5]: " para_choice
+echo "Select para_mode: 1) dp    2) ep    3) diep    4) sp    5) df    6)diep+df"
+read -p "Enter choice [1-6]: " para_choice
 
-para_modes=("dp" "ep" "diep" "sp" "df")
-if [[ $para_choice -ge 1 && $para_choice -le 5 ]]; then
+para_modes=("dp" "ep" "diep" "sp" "df" "diepdf")
+if [[ $para_choice -ge 1 && $para_choice -le 6 ]]; then
     para_mode=${para_modes[$((para_choice-1))]}
 else
     echo "Invalid choice. Exiting."
@@ -37,7 +44,6 @@ else
 fi
 
 vae_path="/mnt/vae"
-num_experts=8
 image_size=256
 
 read -p "Enter world size (default 2): " world_size

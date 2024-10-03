@@ -40,6 +40,7 @@ class PARA_MODE(Enum):
     EP = "ep"
     DIEP = "diep"
     DF = "df"
+    DIEP_DF = "diepdf"
     
     @staticmethod
     def is_ep(val):
@@ -47,7 +48,7 @@ class PARA_MODE(Enum):
         check if the mode is expert-parallel
         """
         assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.EP or val == PARA_MODE.DIEP
+        return val == PARA_MODE.EP or val == PARA_MODE.DIEP or val == PARA_MODE.DIEP_DF
     
     @staticmethod
     def is_sp(val):
@@ -55,7 +56,7 @@ class PARA_MODE(Enum):
         check if the mode is sequence-parallel
         """
         assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.SP or val == PARA_MODE.DF
+        return val == PARA_MODE.SP or val == PARA_MODE.DF or val == PARA_MODE.DIEP_DF
     
     @staticmethod
     def async_op(val):
@@ -63,7 +64,7 @@ class PARA_MODE(Enum):
         check if the mode is asynchronous parallelism
         """
         assert isinstance(val, PARA_MODE)
-        return val == PARA_MODE.DIEP or val == PARA_MODE.DF
+        return val == PARA_MODE.DIEP or val == PARA_MODE.DF or val == PARA_MODE.DIEP_DF
 
 
 def modulate(x, shift, scale):
