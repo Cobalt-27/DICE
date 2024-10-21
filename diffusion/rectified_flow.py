@@ -1,8 +1,8 @@
 import torch 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist 
-from expertpara.diep import ep_to_vc,ep_to_vu,ep_cache_clear
-from seqpara.df import sp_to_vc,sp_to_vu,sp_cache_clear
+from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache
+from seqpara.df import sp_to_vc,sp_to_vu
 from .warmup import ep_requireSync,sp_requireSync
 
 class RectifiedFlow(torch.nn.Module):
@@ -86,12 +86,11 @@ class RectifiedFlow(torch.nn.Module):
             t = torch.tensor([t] * b).to(z.device)
 
             if para_mode is not None:
-                current_step_rev = sample_steps - i
-                ep_requireSync(current_step_rev,para_mode)
-                sp_requireSync(current_step_rev,para_mode)
+                ep_requireSync(i, sample_steps, para_mode)
+                sp_requireSync(i, sample_steps, para_mode)
             
             
-            if para_mode.ep and para_mode.ep_async:
+            if para_mode.ep and para_mode.ep_async and ep_separate_cache():
                 ep_to_vc()
             if para_mode.sp and para_mode.sp_async:
                 sp_to_vc()
@@ -102,7 +101,7 @@ class RectifiedFlow(torch.nn.Module):
             if self.learn_sigma == True: 
                 vc, _ = vc.chunk(2, dim=1)  
             if null_cond is not None:
-                if para_mode.ep and para_mode.ep_async:
+                if para_mode.ep and para_mode.ep_async and ep_separate_cache():
                     ep_to_vu()
                 if para_mode.sp and para_mode.sp_async:
                     sp_to_vu()

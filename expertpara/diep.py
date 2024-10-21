@@ -35,14 +35,16 @@ def ep_cached_tensors_size():
     """
     Measures the size of all the tensors in the cache in bytes.
     """
-    if is_rf_g:
+    if _use_separate_cache:
         return _diep_cache_dispatch_vc.tensors_size()+ _diep_cache_combine_vc.tensors_size()+\
                     _diep_cache_dispatch_vu.tensors_size()+_diep_cache_combine_vu.tensors_size()
     else:
         return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
 
+def ep_separate_cache():
+    return _use_separate_cache
 
-def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, offload_mask=None,is_rf =False):
+def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, offload_mask=None,separate_cache =False):
     if not offload:
         assert prefetch_size == None
     global _diep_cache_dispatch, _diep_cache_combine
@@ -62,11 +64,11 @@ def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=No
         val_len=_CACHE_COMBINE_VAL_LEN,
         offload_mask=offload_mask,
     )
-    global is_rf_g
+    global _use_separate_cache
     
-    is_rf_g =is_rf
+    _use_separate_cache =separate_cache
 
-    if is_rf:
+    if separate_cache:
         global _diep_cache_dispatch_vc, _diep_cache_combine_vc,_diep_cache_dispatch_vu,_diep_cache_combine_vu,is_vc
         is_vc =True
         _diep_cache_dispatch_vc,_diep_cache_combine_vc = _diep_cache_dispatch,_diep_cache_combine
@@ -92,7 +94,7 @@ def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=No
         _diep_cache_combine_vc.cl_name = '_diep_cache_combine_vc'
 
 def ep_to_vc():
-    assert is_rf_g, "Only the RectifiedFlow can make ep cache space change"
+    assert _use_separate_cache, "Only the RectifiedFlow can make ep cache space change"
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch, _diep_cache_combine = _diep_cache_dispatch_vc,_diep_cache_combine_vc
 
@@ -100,7 +102,7 @@ def ep_to_vc():
     is_vc = True
 
 def ep_to_vu():
-    assert is_rf_g, "Only the RectifiedFlow can make ep cache space change"
+    assert _use_separate_cache, "Only the RectifiedFlow can make ep cache space change"
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch, _diep_cache_combine = _diep_cache_dispatch_vu,_diep_cache_combine_vu
 
@@ -111,7 +113,7 @@ def ep_get_rf_state():
     return is_vc
 
 def ep_cache_clear():
-    if is_rf_g:
+    if _use_separate_cache:
         _diep_cache_dispatch_vu.clear()
         _diep_cache_combine_vu.clear()
         _diep_cache_dispatch_vc.clear()

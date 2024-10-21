@@ -202,7 +202,8 @@ class All2AllCache:
         """
         Returns the size of all the tensors in the cache in bytes.
         """
-        return 0
+        # return 0
+        
         return sum(
             sum(
                 (
