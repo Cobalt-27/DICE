@@ -76,19 +76,23 @@ per_proc_batch_size=${per_proc_batch_size:-4}
 # Initialize extra_args as an empty string
 
 
-
-
 read -p "Use --auto-gc? (y/n, default n): " use_auto_gc
 use_auto_gc=${use_auto_gc:-n}
 if [ "$use_auto_gc" = "y" ]; then
     extra_args+=" --auto-gc"
 fi
 
-read -p "Use --offload? (y/n, default n): " use_offload
-use_offload=${use_offload:-n}
-if [ "$use_offload" = "y" ]; then
-    extra_args+=" --offload"
+read -p "Use --ep-share-cache? (y/n, default n): " use_ep_share_cache
+use_ep_share_cache=${use_ep_share_cache:-n}
+if [ "$use_ep_share_cache" = "y" ]; then
+    extra_args+=" --ep-share-cache"
 fi
+
+# read -p "Use --offload? (y/n, default n): " use_offload
+# use_offload=${use_offload:-n}
+# if [ "$use_offload" = "y" ]; then
+#     extra_args+=" --offload"
+# fi
 
 read -p "Use --trim-samples? (y/n, default n): " use_trim_samples
 use_trim_samples=${use_trim_samples:-n}
@@ -105,17 +109,20 @@ strided_sync=${strided_sync:-0}
 read -p "Use --sp-async-warm-up? (default 0): " sp_async_warm_up
 sp_async_warm_up=${sp_async_warm_up:-0}
 
-read -p "Enter cache prefetch (default None): " cache_prefetch
+read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
+ep_async_cool_down=${ep_async_cool_down:-0}
 
-read -p "Enter cache stride (default None): " cache_stride
+# read -p "Enter cache prefetch (default None): " cache_prefetch
 
-if [ -n "$cache_prefetch" ]; then
-    extra_args+=" --cache-prefetch $cache_prefetch"
-fi
+# read -p "Enter cache stride (default None): " cache_stride
 
-if [ -n "$cache_stride" ]; then
-    extra_args+=" --cache-stride $cache_stride"
-fi
+# if [ -n "$cache_prefetch" ]; then
+#     extra_args+=" --cache-prefetch $cache_prefetch"
+# fi
+
+# if [ -n "$cache_stride" ]; then
+#     extra_args+=" --cache-stride $cache_stride"
+# fi
 
 read -p "Enter number of sampling steps (invalid for XL&G, default 500): " num_sample_steps
 num_sample_steps=${num_sample_steps:-500}
@@ -149,6 +156,7 @@ function save_run_command {
     echo "--ep-async-warm-up $ep_async_warm_up \\" >> "$output_script"
     echo "--strided-sync $strided_sync \\" >> "$output_script"
     echo "--sp-async-warm-up $sp_async_warm_up \\" >> "$output_script"
+    echo "--ep-async-cool-down $ep_async_cool_down \\" >> "$output_script"
     echo "$extra_args" >> "$output_script"
 
     chmod +x "$output_script"
@@ -171,4 +179,5 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --ep-async-warm-up $ep_async_warm_up \
 --strided-sync $strided_sync \
 --sp-async-warm-up $sp_async_warm_up \
+--ep-async-cool-down $ep_async_cool_down \
 $extra_args

@@ -502,9 +502,8 @@ class GaussianDiffusion:
             # model_kwargs['async_pause'] = False
             if para_mode is not None:
                 t_scalar = t[0].item()
-                current_step_rev = para_mode.num_sampling_steps - t_scalar
-                ep_requireSync(current_step_rev,para_mode)
-                sp_requireSync(current_step_rev,para_mode)                
+                ep_requireSync(t_scalar, para_mode.num_sampling_steps, para_mode)
+                sp_requireSync(t_scalar, para_mode.num_sampling_steps, para_mode)                
 
             with th.no_grad():
                 out = self.p_sample(
