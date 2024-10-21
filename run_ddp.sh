@@ -120,8 +120,8 @@ fi
 read -p "Enter number of sampling steps (invalid for XL&G, default 500): " num_sample_steps
 num_sample_steps=${num_sample_steps:-500}
 
-read -p "Enter CFG scale (default 7): " cfg_scale
-cfg_scale=${cfg_scale:-7}
+read -p "Enter CFG scale (default 1.5): " cfg_scale
+cfg_scale=${cfg_scale:-1.5}
 
 read -p "Enter number of FID samples (default $((per_proc_batch_size * world_size))): " fid_samples
 fid_samples=${fid_samples:-$((per_proc_batch_size * world_size))}
