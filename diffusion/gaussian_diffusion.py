@@ -11,7 +11,7 @@ import torch as th
 import enum
 
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
-
+from .warmup import ep_requireSync,sp_requireSync
 
 def mean_flat(tensor):
     """
@@ -427,6 +427,7 @@ class GaussianDiffusion:
         model_kwargs=None,
         device=None,
         progress=False,
+        para_mode = None,
     ):
         """
         Generate samples from the model.
@@ -457,6 +458,7 @@ class GaussianDiffusion:
             model_kwargs=model_kwargs,
             device=device,
             progress=progress,
+            para_mode = para_mode,
         ):
             final = sample
         return final["sample"]
@@ -472,6 +474,7 @@ class GaussianDiffusion:
         model_kwargs=None,
         device=None,
         progress=False,
+        para_mode = None,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -496,6 +499,13 @@ class GaussianDiffusion:
             indices = tqdm(indices)
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
+            # model_kwargs['async_pause'] = False
+            if para_mode is not None:
+                t_scalar = t[0].item()
+                current_step_rev = para_mode.num_sampling_steps - t_scalar
+                ep_requireSync(current_step_rev,para_mode)
+                sp_requireSync(current_step_rev,para_mode)                
+
             with th.no_grad():
                 out = self.p_sample(
                     model,

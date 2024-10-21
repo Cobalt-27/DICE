@@ -61,8 +61,9 @@ def is_completed(handles):
         return all(handle.is_completed() for handle in handles)
     return True
 
+import torch.distributed as dist
 class All2AllCache:
-    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None, offload_mask = None):
+    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None, offload_mask = None,cl_name = None):
         """
         capacity: the number of entries in the cache
         auto_gc: automatically clear send buffer after all2all completes
@@ -81,6 +82,7 @@ class All2AllCache:
         self.offload_mask = offload_mask if offload_mask is not None else [True] * capacity
         if self.offload:
             assert prefetch_size is not None
+        self.cl_name = cl_name
     """
     NOTE: the second item in the value tuple is the recv_buf
     """
@@ -140,6 +142,10 @@ class All2AllCache:
 
     # @CudaProfiler.prof_func('cache.put')
     def put(self, key, value):
+        # if self.name:
+        #     if dist.get_rank() == 0:
+        #         print(f'put in {self.cl_name}')
+
         assert isinstance(key, int) and len(value) == self.val_len
         if value is not None:
             """
@@ -162,6 +168,10 @@ class All2AllCache:
 
     # @CudaProfiler.prof_func('cache.get')
     def get(self, key):
+        # if self.name:
+        #     if dist.get_rank() == 0:
+        #         print(f'get from {self.cl_name}')
+        
         assert isinstance(key, int)
         if self.offload and self.offload_mask[key]:
             with CudaProfiler.scope(f"cache.wait"):

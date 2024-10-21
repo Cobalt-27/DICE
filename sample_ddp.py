@@ -27,8 +27,8 @@ import argparse
 from cudaprof.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
-from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init
-from seqpara.df import sp_cache_init, sp_cache_clear, sp_cached_tensors_size
+from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init,ep_get_max_mem
+from seqpara.df import sp_cache_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
 import time
 
 
@@ -48,7 +48,8 @@ def create_npz_from_sample_folder(sample_dir, num=50_000):
     print(f"Saved .npz file to {npz_path} [shape={samples.shape}].")
     return npz_path
 
-
+import torch.profiler as profiler
+from profiler_class import ProfileExp
 
 def main(args):
     """
@@ -107,7 +108,8 @@ def main(args):
     
     model.eval()  # important!
     if rf:
-        diffusion = RectifiedFlow(model)
+        diffusion = RectifiedFlow(model,args.para_mode)
+        
     else:
         diffusion = create_diffusion(str(args.num_sampling_steps))
     vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
@@ -117,7 +119,10 @@ def main(args):
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
     folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
-                  f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-gc-{args.auto_gc}-offload-{args.offload}-prefetch-{args.cache_prefetch}{'' if args.extra_name is None else f'-{args.extra_name}'}"
+                f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-gc-{args.auto_gc}-offload-{args.offload}" \
+                f"-prefetch-{args.cache_prefetch}-epwarmup-{args.ep_async_warm_up}-sync-{args.strided_sync}-spwarmup-{args.sp_async_warm_up}" \
+                f"{'' if args.extra_name is None else f'-{args.extra_name}'}"
+    
     sample_folder_dir = os.path.join(args.sample_dir, folder_name)
     if args.extra_folder_name is not None:
         sample_folder_dir = os.path.join(args.sample_dir, args.extra_folder_name, folder_name)
@@ -172,9 +177,16 @@ def main(args):
             offload=args.offload,
             prefetch_size=args.cache_prefetch,
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
+            is_rf = rf
         )
     if args.para_mode.sp and args.para_mode.sp_async:
-        sp_cache_init(auto_gc=True)
+        sp_cache_init(auto_gc=True,is_rf = rf)
+    
+    
+    # prof= ProfileExp("profile_exp",profile_at= 10 if torch.distributed.get_rank()==0 else -100,
+    #                 wait = 0,warmup = 0,active = 1,repeat = 1)
+    # if dist.get_rank()==0:
+    #     prof._start()
     
     for iter in pbar:
         CudaProfiler.prof().reset()
@@ -207,7 +219,8 @@ def main(args):
                 STEPSIZE = 50
                 init_noise = z
                 conds = y
-                samples = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * y.shape[0]).cuda(), sample_steps = STEPSIZE, cfg = args.cfg_scale)
+                samples = diffusion.sample_with_xps(init_noise, conds, null_cond = torch.tensor([1000] * y.shape[0]).cuda(), 
+                            sample_steps = STEPSIZE, cfg = args.cfg_scale,para_mode= args.para_mode)
         else:
             # Setup classifier-free guidance:
             if using_cfg:
@@ -220,7 +233,8 @@ def main(args):
                 model_kwargs = dict(y=y)
                 sample_fn = model.forward
             samples = diffusion.p_sample_loop(
-                sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=False, device=device
+                sample_fn, z.shape, z, clip_denoised=False, 
+                model_kwargs=model_kwargs, progress=False, device=device,para_mode=args.para_mode
             )
         CudaProfiler.prof().stop('total')
         torch.cuda.synchronize()
@@ -229,7 +243,9 @@ def main(args):
         mem_summary = torch.cuda.memory_summary() + "\n"
         mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
         measured_total_time_line = f"Measured time: {(time_end - time_start):.2f}s"
-        prof_lines += [mem_usage_line, measured_total_time_line]
+        peak_memory_allocated = torch.cuda.max_memory_allocated() / (1024 * 1024)
+        peak_memory_allocated_line = f"Max memory usage:{peak_memory_allocated:.2f} MB"
+        
         
         if args.trim_samples:
             samples = samples[:samples.shape[0] // bs] # keep only one sample per batch
@@ -258,29 +274,50 @@ def main(args):
             dist.scatter(tensor=local_tensor, scatter_list=chunks, src=0)
             samples = local_tensor
         
+        if rank == 0:
+            cache_line = ""
+            if args.para_mode.ep_async:
+                cache_line += f"\nEP Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
+                cache_line += f"\nEP Max Cache size: {ep_get_max_mem() / (1024 * 1024):.2f} MB"
+            if args.para_mode.sp_async:
+                cache_line += f"\nSP Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
+                cache_line += f"\nSP Max Cache size: {sp_get_max_mem() / (1024 * 1024):.2f} MB"
+            prof_lines.append(cache_line)
+            prof_lines+=analyse_prof(CudaProfiler.prof())
+            
+
+        if args.para_mode.ep_async:
+            ep_cache_clear()
+        if args.para_mode.sp_async:
+            sp_cache_clear()
+        
+        
+        vae.enable_slicing()
+        torch.cuda.reset_peak_memory_stats()
+
         samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
         samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
         
-        assert len(samples) == bs, f"Expected {bs} samples, got {len(samples)}"
+        if not args.trim_samples:
+            assert len(samples) == bs, f"Expected {bs} samples, got {len(samples)}"
         # Save samples to disk as individual .png files
         for i, sample in enumerate(samples):
             index = i * dist.get_world_size() + rank + total
             Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
         total += global_batch_size
 
+        peak_memory_allocated_when_vae = torch.cuda.max_memory_allocated() / (1024 * 1024)
+        peak_memory_allocated_when_vae_line = f"Max memory usage_when_vae:{peak_memory_allocated_when_vae:.2f} MB"
+
+        prof_lines += [mem_usage_line, measured_total_time_line,
+            peak_memory_allocated_line,peak_memory_allocated_when_vae_line]
         if rank == 0:
-            cache_line = ""
-            if args.para_mode.ep_async:
-                cache_line += f"\nEP Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
-            if args.para_mode.sp_async:
-                cache_line += f"\nSP Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
-            prof_lines.append(cache_line)
-            prof_lines+=analyse_prof(CudaProfiler.prof())
             with open(prof_path, "a") as f:
                 f.writelines([line + "\n" for line in prof_lines])
             print("\n".join(prof_lines))
             with open(mem_summary_path, "a") as f:
                 f.write(mem_summary)
+
         torch.cuda.empty_cache()
 
     # Make sure all processes have finished saving their samples before attempting to convert to .npz
@@ -326,10 +363,20 @@ if __name__ == "__main__":
     parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
     parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
     parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
+    
+    parser.add_argument("--ep-async-warm-up", type=int, default=0, help="Enable ep async warm-up feature (default: 0)")
+    parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
+    parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     args = parser.parse_args()
     
     # arguments check
-    args.para_mode = ParaMode(sp=args.sp, sp_async=args.sp_async, ep=args.ep, ep_async=args.ep_async)
+    # args.para_mode = ParaMode(sp=args.sp, sp_async=args.sp_async, ep=args.ep, ep_async=args.ep_async)
+    args.para_mode = ParaMode(sp=args.sp, sp_async=args.sp_async, ep=args.ep, 
+                              ep_async=args.ep_async,num_sampling_steps= args.num_sampling_steps,
+                              ep_async_warm_up=args.ep_async_warm_up,strided_sync =args.strided_sync,
+                              sp_async_warm_up=args.sp_async_warm_up
+                              )
+    
     if not args.para_mode.ep_async:
         assert not args.offload, "offload is only available when using DiEP."
         assert args.cache_prefetch is None, "cache_prefetch is only available when using DiEP."
@@ -340,5 +387,12 @@ if __name__ == "__main__":
             assert args.cache_stride is None, "cache_stride is only available when using offload."
     if not args.para_mode.sp_async and not args.para_mode.ep_async:
         assert not args.auto_gc, "auto_gc is only available when using asynchronous operations."
-            
+    if args.ep_async_warm_up > 0:
+        assert args.ep_async, "warm up is only available whem using ep async."
+    if args.strided_sync > 0:
+        assert args.ep_async, "Strided sync is only available whem using ep async."
+    assert args.num_sampling_steps > args.ep_async_warm_up, "Warm up steps should be smaller than the total steps of denoising."
+    if args.sp_async_warm_up > 0:
+        assert args.sp_async, "warm up is only available whem using sp async."
+
     main(args)
