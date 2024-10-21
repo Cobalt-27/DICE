@@ -32,7 +32,8 @@ except Exception as e:
 
 
 class ParaMode():
-    def __init__(self, ep=False, ep_async=False, sp=False, sp_async=False):
+    def __init__(self, ep=False, ep_async=False, sp=False, sp_async=False,
+                 num_sampling_steps= None,ep_async_warm_up = None, strided_sync = None,sp_async_warm_up = None):
         self.ep = ep
         self.ep_async = ep_async
         if ep_async:
@@ -45,6 +46,10 @@ class ParaMode():
             self.dp = True
         else:
             self.dp = False
+        self.num_sampling_steps = num_sampling_steps
+        self.ep_async_warm_up = ep_async_warm_up
+        self.strided_sync = strided_sync
+        self.sp_async_warm_up = sp_async_warm_up
             
     def verbose(self):
         if self.dp:

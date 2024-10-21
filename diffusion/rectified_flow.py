@@ -1,5 +1,9 @@
 import torch 
-from torch.nn.parallel import DistributedDataParallel as DDP 
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist 
+from expertpara.diep import ep_to_vc,ep_to_vu,ep_cache_clear
+from seqpara.df import sp_to_vc,sp_to_vu,sp_cache_clear
+from .warmup import ep_requireSync,sp_requireSync
 
 class RectifiedFlow(torch.nn.Module):
     def __init__(self, model, ln=True):
@@ -12,6 +16,7 @@ class RectifiedFlow(torch.nn.Module):
         else:
             self.learn_sigma = model.learn_sigma 
 
+        
     def forward(self, x, cond):
 
         b = x.size(0)
@@ -45,6 +50,7 @@ class RectifiedFlow(torch.nn.Module):
 
     @torch.no_grad()
     def sample(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
+        raise RuntimeError("shouldn't reach here")
         b = z.size(0)
         dt = 1.0 / sample_steps
         dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
@@ -67,7 +73,8 @@ class RectifiedFlow(torch.nn.Module):
         return images
 
     @torch.no_grad()
-    def sample_with_xps(self, z, cond, null_cond=None, sample_steps=50, cfg=2.0):
+    def sample_with_xps(self, z, cond, null_cond=None, sample_steps=50, 
+                        cfg=2.0,para_mode = None):
         b = z.size(0)
         dt = 1.0 / sample_steps
         dt = torch.tensor([dt] * b).to(z.device).view([b, *([1] * len(z.shape[1:]))])
@@ -78,10 +85,32 @@ class RectifiedFlow(torch.nn.Module):
             t = i / sample_steps
             t = torch.tensor([t] * b).to(z.device)
 
+            if para_mode is not None:
+                current_step_rev = sample_steps - i
+                ep_requireSync(current_step_rev,para_mode)
+                sp_requireSync(current_step_rev,para_mode)
+            
+            
+            if para_mode.ep and para_mode.ep_async:
+                ep_to_vc()
+            if para_mode.sp and para_mode.sp_async:
+                sp_to_vc()
+
+            # ep_cache_clear()
             vc = self.model(z, t, cond) 
+            
             if self.learn_sigma == True: 
                 vc, _ = vc.chunk(2, dim=1)  
             if null_cond is not None:
+                if para_mode.ep and para_mode.ep_async:
+                    ep_to_vu()
+                if para_mode.sp and para_mode.sp_async:
+                    sp_to_vu()
+                
+                # ep_cache_clear()
+
+                # if dist.get_rank() ==0:
+                #     print("vu_running")
                 vu = self.model(z, t, null_cond) 
                 if self.learn_sigma == True: 
                     vu, _ = vu.chunk(2, dim=1) 
