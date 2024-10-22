@@ -3,7 +3,7 @@
 # 定义想要变化的参数，例如 per_proc_batch_size 的不同值
 batch_sizes=(4 8 16 32 64 128)
 
-combinations=("nnnnn" "nnyyy" "ynnnn" "yynny" "yyyyy" )
+combinations=("nnyyy" "nnyyn")
 # combinations=("yyyy" )
 
 for combination in "${combinations[@]}"; do

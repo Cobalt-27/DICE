@@ -25,7 +25,7 @@ class AllGatherCache:
     def __init__(self, auto_gc):
         """
         capacity: the number of entries in the cache
-        auto_gc: automatically clear send buffer after allgather completes
+        auto_gc: automatically clear local kv tensors after allgather completes
         """ 
         self.auto_gc = auto_gc
         self.cache = {}
@@ -37,6 +37,10 @@ class AllGatherCache:
         assert isinstance(key, int) and len(value) == ENTRY_VAL_LEN
         """
         The send buf is tensor, the recv buf is a list of tensors
+        we should be keeping the send buf to avoid it's deallocated before the allgather completes
+                
+        NOTE:
+        now the send buf is part of the recv buf list, there is no need to store it, but I am keeping it for minimal changes
         """
         assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor) and value[SEND_BUF_IDX].is_contiguous()
         assert isinstance(value[RECV_BUF_IDX], list) 

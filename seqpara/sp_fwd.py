@@ -232,6 +232,8 @@ def sp_all_gather(x_local, concat_dim, async_op=False):
 
     # Prepare a list to gather the local tensors from all ranks
     x_gather_list = [torch.zeros_like(x_local).contiguous() for _ in range(world_size)]
+    
+    x_gather_list[dist.get_rank()] = x_local  # Store the local tensor in the list, save some memory
 
     with CudaProfiler.scope("all_gather.call_dist"):
         # Perform all_gather to gather from all ranks

@@ -28,7 +28,8 @@ from cudaprof.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
 from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init,ep_get_max_mem
-from seqpara.df import sp_cache_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
+from seqpara.df import sp_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
+from expertpara.ep_fwd import use_latest_expert_weights
 import time
 
 
@@ -121,9 +122,10 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
+    folder_name = f"test-{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
-                f"-prefetch-{args.cache_prefetch}-epwarmup-{args.ep_async_warm_up}-stridesync-{args.strided_sync}-epcooldown-{args.ep_async_cool_down}-spwarmup-{args.sp_async_warm_up}-sharecache-{args.ep_share_cache}" \
+                f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
+                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}" \
                 f"{'' if args.extra_name is None else f'-{args.extra_name}'}"
     
     sample_folder_dir = os.path.join(args.sample_dir, folder_name)
@@ -180,10 +182,11 @@ def main(args):
             offload=args.offload,
             prefetch_size=args.cache_prefetch,
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
-            separate_cache=not args.ep_share_cache
+            separate_cache=(not args.ep_share_cache) and rf,
         )
+        use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
-        sp_cache_init(auto_gc=True,is_rf = rf)
+        sp_init(sp_use_mngr=not args.sp_legacy_cache, capacity = model.depth, comm_checkpoint = 4, auto_gc = True, separate_cache = rf)
     
     
     # prof= ProfileExp("profile_exp",profile_at= 10 if torch.distributed.get_rank()==0 else -100,
@@ -372,6 +375,9 @@ if __name__ == "__main__":
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
+    
+    parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
+    parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
     args = parser.parse_args()
     
     # arguments check
@@ -398,8 +404,17 @@ if __name__ == "__main__":
         assert args.ep_async, "cool down is only available whem using ep async."
     if args.strided_sync > 0:
         assert args.ep_async, "Strided sync is only available whem using ep async."
-    assert args.num_sampling_steps > args.ep_async_warm_up, "Warm up steps should be smaller than the total steps of denoising."
+    
+    if args.model == "DiT-S/2":  
+        assert args.num_sampling_steps > args.ep_async_warm_up, "Warm up steps should be smaller than the total steps of denoising."
+    
     if args.sp_async_warm_up > 0:
         assert args.sp_async, "warm up is only available whem using sp async."
-
+    # sp_legacy_cache True means using caches written by ourselves, False means using Distrifusion caches
+    if args.sp_legacy_cache:
+        assert args.sp_async, "Legacy cache is only available when using SP async."
+    if args.ep_score_use_latest:
+        assert args.ep_async, "Use latest score is only available when using EP async."
+    if args.ep_share_cache:
+        assert args.ep_async, "Shared cache is only available when using EP async."
     main(args)

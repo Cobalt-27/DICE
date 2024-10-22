@@ -214,7 +214,7 @@ class All2AllCache:
                     )
                 )
                 for x in v
-            )
+            ) if v is not None else 0
             for 
             v in self.cache
         )
