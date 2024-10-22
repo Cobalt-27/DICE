@@ -86,8 +86,10 @@ class RectifiedFlow(torch.nn.Module):
             t = torch.tensor([t] * b).to(z.device)
 
             if para_mode is not None:
-                ep_requireSync(i, sample_steps, para_mode)
-                sp_requireSync(i, sample_steps, para_mode)
+                if para_mode.ep_async:
+                    ep_requireSync(i, sample_steps, para_mode)
+                if para_mode.sp_async:
+                    sp_requireSync(i, sample_steps, para_mode)
             
             
             if para_mode.ep and para_mode.ep_async and ep_separate_cache():

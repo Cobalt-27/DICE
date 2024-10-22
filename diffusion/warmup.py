@@ -14,7 +14,7 @@ def ep_requireSync(i, sample_steps,para_mode,):
     need_clear = False
 
     current_step_rev = sample_steps - i
-    if current_step_rev <= para_mode.ep_async_warm_up:
+    if current_step_rev <= para_mode.ep_async_warm_up and current_step_rev >0:
         need_clear=True
     elif para_mode.strided_sync > 0 and i % para_mode.strided_sync == 0:
         need_clear=True
@@ -27,5 +27,5 @@ def ep_requireSync(i, sample_steps,para_mode,):
 
 def sp_requireSync(i, sample_steps,para_mode):
     current_step_rev = sample_steps - i
-    if current_step_rev <= para_mode.sp_async_warm_up:
+    if current_step_rev <= para_mode.sp_async_warm_up and current_step_rev >0:
         sp_cache_clear()
