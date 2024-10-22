@@ -100,6 +100,12 @@ if [ "$use_trim_samples" = "y" ]; then
     extra_args+=" --trim-samples"
 fi
 
+read -p "Use --ep-score-nofix? (y/n, default n): " use_ep_score_nofix
+use_ep_score_nofix=${use_ep_score_nofix:-n}
+if [ "$use_ep_score_nofix" = "y" ]; then
+    extra_args+=" --ep-score-nofix"
+fi
+
 read -p "Use --ep-async-warm-up? (default 0): " ep_async_warm_up
 ep_async_warm_up=${ep_async_warm_up:-0}
 

@@ -28,7 +28,8 @@ from cudaprof.prof import CudaProfiler
 from expertpara.prof_analyse import analyse_prof
 from expertpara.etrim import trim_state_dict
 from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init,ep_get_max_mem
-from seqpara.df import sp_cache_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
+from seqpara.df import sp_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
+from expertpara.ep_fwd import use_latest_expert_weights
 import time
 
 
@@ -182,8 +183,9 @@ def main(args):
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
             separate_cache=not args.ep_share_cache
         )
+        use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
-        sp_cache_init(auto_gc=True,is_rf = rf)
+        sp_init(sp_use_mngr=not args.sp_legacy_cache, capacity = model.depth, comm_checkpoint = 4, auto_gc = True, separate_cache = rf)
     
     
     # prof= ProfileExp("profile_exp",profile_at= 10 if torch.distributed.get_rank()==0 else -100,
@@ -372,6 +374,9 @@ if __name__ == "__main__":
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
+    
+    parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
+    parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
     args = parser.parse_args()
     
     # arguments check
@@ -401,5 +406,10 @@ if __name__ == "__main__":
     assert args.num_sampling_steps > args.ep_async_warm_up, "Warm up steps should be smaller than the total steps of denoising."
     if args.sp_async_warm_up > 0:
         assert args.sp_async, "warm up is only available whem using sp async."
-
+    if args.sp_legacy_cache:
+        assert args.sp_async, "Legacy cache is only available when using SP async."
+    if args.ep_score_use_latest:
+        assert args.ep_async, "Use latest score is only available when using EP async."
+    if args.ep_share_cache:
+        assert args.ep_async, "Shared cache is only available when using EP async."
     main(args)

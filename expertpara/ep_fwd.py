@@ -7,6 +7,13 @@ from .diep import global_combine_async,global_dispatch_async
 from cudaprof.prof import CudaProfiler
 # ref: https://github.com/laekov/fastmoe
 
+_use_latest_expert_weights = None
+
+def use_latest_expert_weights(val):
+    assert val in [True, False], "val must be a boolean"
+    global _use_latest_expert_weights
+    _use_latest_expert_weights = val
+
 @torch.no_grad()
 # parallel version of SparseMoeBlock.moe_infer()
 def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices, flat_expert_weights, num_experts_per_tok, async_op, cache_key=None):
@@ -80,6 +87,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     - flat_expert_weights, using WRONG WEIGHTS will lead to CORRUPTED RESULTS
     
     """
+    latest_flat_expert_weights = flat_expert_weights.clone()
     # NOTE: Global Dispatch
     # mapping: [#input tokens * num_experts_per_tok, h] -> [#combined tokens * num_experts_per_tok, h]
     with CudaProfiler.scope('global_dispatch'):
@@ -123,7 +131,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     with CudaProfiler.scope('local_combine'):
         # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
         outp_dup = _local_combine(inp=grouped_dup_outp, pos=grouped_idx_dup, out_size=flat_expert_indices.size(0))
-    outp_dup.mul_(flat_expert_weights)
+    if _use_latest_expert_weights:
+        outp_dup.mul_(latest_flat_expert_weights) # flat_expert_weights is updated in global_combine_async
+    else:
+        outp_dup.mul_(flat_expert_weights) # flat_expert_weights is NOT updated in async all2all
     # [#input tokens * num_experts_per_tok, h] -> [#input tokens, h]
     expert_out = outp_dup.view(inp.size(0), num_experts_per_tok, inp.size(1)).sum(dim=1)
     assert expert_out.shape == inp.shape, f"{expert_out.shape} != {inp.shape}"
