@@ -30,6 +30,7 @@ from expertpara.etrim import trim_state_dict
 from expertpara.diep import ep_cache_clear, ep_cached_tensors_size, ep_cache_init,ep_get_max_mem
 from seqpara.df import sp_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
 from expertpara.ep_fwd import use_latest_expert_weights
+from seqpara.df import sp_init, sp_cache_clear, sp_cached_tensors_size,sp_get_max_mem
 import time
 
 
