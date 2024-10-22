@@ -180,7 +180,7 @@ def main(args):
             offload=args.offload,
             prefetch_size=args.cache_prefetch,
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
-            separate_cache=args.ep_share_cache
+            separate_cache=not args.ep_share_cache
         )
     if args.para_mode.sp and args.para_mode.sp_async:
         sp_cache_init(auto_gc=True,is_rf = rf)
