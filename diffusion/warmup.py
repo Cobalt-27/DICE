@@ -1,5 +1,7 @@
 from expertpara.diep import ep_cache_clear
 from seqpara.df import sp_cache_clear
+from expertpara.diep import ep_cache_clear
+from seqpara.df import sp_cache_clear
 
 def ep_requireSync(i, sample_steps,para_mode,):
     '''
@@ -25,5 +27,5 @@ def ep_requireSync(i, sample_steps,para_mode,):
 
 def sp_requireSync(i, sample_steps,para_mode):
     current_step_rev = sample_steps - i
-    if current_step_rev < para_mode.sp_async_warm_up:
+    if current_step_rev <= para_mode.sp_async_warm_up:
         sp_cache_clear()
