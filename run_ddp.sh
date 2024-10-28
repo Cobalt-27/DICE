@@ -63,6 +63,11 @@ if [ "$use_sp_async" = "y" ]; then
     extra_args+=" --sp-async"
 fi
 
+read -p "Use --sp-legacy-cache? (y/n, default n): " use_sp_legacy_cache
+use_sp_legacy_cache=${use_sp_legacy_cache:-n}
+if [ "$use_sp_legacy_cache" = "y" ]; then
+    extra_args+=" --sp-legacy-cache"
+fi
 
 
 read -p "Enter world size (default 2): " world_size
@@ -100,10 +105,10 @@ if [ "$use_trim_samples" = "y" ]; then
     extra_args+=" --trim-samples"
 fi
 
-read -p "Use --ep-score-nofix? (y/n, default n): " use_ep_score_nofix
-use_ep_score_nofix=${use_ep_score_nofix:-n}
-if [ "$use_ep_score_nofix" = "y" ]; then
-    extra_args+=" --ep-score-nofix"
+read -p "Use --ep-score-use-latest? (y/n, default n): " ep_score_use_latest
+ep_score_use_latest=${ep_score_use_latest:-n}
+if [ "$ep_score_use_latest" = "y" ]; then
+    extra_args+=" --ep-score-use-latest"
 fi
 
 read -p "Use --ep-async-warm-up? (default 0): " ep_async_warm_up
@@ -145,6 +150,7 @@ if [ "$cuda_visible_devices" != "all" ]; then
     export CUDA_VISIBLE_DEVICES=$cuda_visible_devices
 fi
 
+# load all the parameters and save them to a script
 function save_run_command {
     echo "#!/bin/bash" > "$output_script"
     echo "" >> "$output_script"
