@@ -100,12 +100,15 @@ def main(args):
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
+    if args.image_size != 256:
+        assert 'pos_embed' in state_dict, "Custom checkpoints must have 'pos_embed' key."
+        del state_dict['pos_embed']
     if args.para_mode.ep:
         """
         NOTE: trim unused experts, for ep only
         """
         state_dict = trim_state_dict(state_dict, args.num_experts)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=args.image_size == 256)
     
     model.eval()  # important!
     if rf:
