@@ -57,6 +57,8 @@ class PatchParallelismCommManager:
         return len(self.starts) - 1
 
     def create_buffer(self):
+        # print("clear cache")
+        # torch.cuda.empty_cache()
         if dist.get_rank() == 0 and DF_VERBOSE:
             print(
                 f"Create buffer with {self.numel / 1e6:.3f}M parameters for {len(self.starts)} tensors on each device."
