@@ -68,7 +68,7 @@ def main(args):
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
-
+    print(f"args.ckpt:{args.ckpt}")
     if args.ckpt is None:
         assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
         assert args.image_size in [256, 512]
@@ -100,12 +100,17 @@ def main(args):
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
+    # Only for performance testing, we can generate larger images but the quality will be poor
+    if args.image_size != 256:
+        assert 'pos_embed' in state_dict, "Custom checkpoints must have 'pos_embed' key."
+        del state_dict['pos_embed']
+
     if args.para_mode.ep:
         """
         NOTE: trim unused experts, for ep only
         """
         state_dict = trim_state_dict(state_dict, args.num_experts)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=args.image_size == 256)
     
     model.eval()  # important!
     if rf:
@@ -122,12 +127,14 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    folder_name = f"test-{model_string_name}-bs-{args.per_proc_batch_size}" \
-                f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
+    folder_name = f"OriginalT1030--{model_string_name}-bs-{args.per_proc_batch_size}" \
+                f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
                 f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}" \
                 f"{'' if args.extra_name is None else f'-{args.extra_name}'}"
-    
+    if dist.get_rank() == 0:
+        print(f"Saving samples to folder: {folder_name}")
+        
     sample_folder_dir = os.path.join(args.sample_dir, folder_name)
     if args.extra_folder_name is not None:
         sample_folder_dir = os.path.join(args.sample_dir, args.extra_folder_name, folder_name)
@@ -205,7 +212,7 @@ def main(args):
         z = torch.randn(bs, model.in_channels, latent_size, latent_size, device=device)
         y = torch.randint(0, args.num_classes, (bs,), device=device)
         
-        if args.para_mode.sp:
+        if args.para_mode.sp and not args.single_img:
             z_list = [torch.zeros_like(z) for _ in range(dist.get_world_size())]
             y_list = [torch.zeros_like(y) for _ in range(dist.get_world_size())]
             dist.all_gather(z_list, z)
@@ -214,8 +221,7 @@ def main(args):
             y = torch.cat(y_list, dim=0)
             # we gather all z and y to rank0, so that sp is able to produce the same samples as DP and EP
             # latent in rank0 will be scattered to all ranks later
-            
-        
+
         torch.cuda.synchronize()
         time_start = time.time()
         CudaProfiler.prof().start('total')
@@ -245,7 +251,8 @@ def main(args):
         CudaProfiler.prof().stop('total')
         torch.cuda.synchronize()
         time_end = time.time()
-            
+        
+        CudaProfiler.prof().start('vae')
         mem_summary = torch.cuda.memory_summary() + "\n"
         mem_usage_line = f"Memory usage: {torch.cuda.memory_allocated() / (1024 * 1024):.2f} MB"
         measured_total_time_line = f"Measured time: {(time_end - time_start):.2f}s"
@@ -255,10 +262,32 @@ def main(args):
         
         if args.trim_samples:
             samples = samples[:samples.shape[0] // bs] # keep only one sample per batch
+
+        if args.single_img:
+            samples = samples[:samples.shape[0] // dis.get_world_size()]
         if not rf and using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
         
-        if args.para_mode.sp:
+        if rank == 0:
+            cache_line = ""
+            if args.para_mode.ep_async:
+                cache_line += f"\nEP Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
+                cache_line += f"\nEP Max Cache size: {ep_get_max_mem() / (1024 * 1024):.2f} MB"
+            if args.para_mode.sp_async:
+                cache_line += f"\nSP Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
+                cache_line += f"\nSP Max Cache size: {sp_get_max_mem() / (1024 * 1024):.2f} MB"
+            prof_lines.append(cache_line)
+            
+            
+
+        if args.para_mode.ep_async:
+            ep_cache_clear()
+        if args.para_mode.sp_async:
+            sp_cache_clear()
+        
+        
+        
+        if args.para_mode.sp and not args.single_img:
             """
             NOTE:
             use DP for vae if sp is enabled, otherwise all samples will be decoded on rank0
@@ -279,25 +308,7 @@ def main(args):
             # Scatter the chunks from rank 0 to all ranks
             dist.scatter(tensor=local_tensor, scatter_list=chunks, src=0)
             samples = local_tensor
-        
-        if rank == 0:
-            cache_line = ""
-            if args.para_mode.ep_async:
-                cache_line += f"\nEP Cache size: {ep_cached_tensors_size() / (1024 * 1024):.2f} MB"
-                cache_line += f"\nEP Max Cache size: {ep_get_max_mem() / (1024 * 1024):.2f} MB"
-            if args.para_mode.sp_async:
-                cache_line += f"\nSP Cache size: {sp_cached_tensors_size() / (1024 * 1024):.2f} MB"
-                cache_line += f"\nSP Max Cache size: {sp_get_max_mem() / (1024 * 1024):.2f} MB"
-            prof_lines.append(cache_line)
-            prof_lines+=analyse_prof(CudaProfiler.prof())
             
-
-        if args.para_mode.ep_async:
-            ep_cache_clear()
-        if args.para_mode.sp_async:
-            sp_cache_clear()
-        
-        
         vae.enable_slicing()
         torch.cuda.reset_peak_memory_stats()
 
@@ -317,7 +328,11 @@ def main(args):
 
         prof_lines += [mem_usage_line, measured_total_time_line,
             peak_memory_allocated_line,peak_memory_allocated_when_vae_line]
+
+        CudaProfiler.prof().stop('vae')
+
         if rank == 0:
+            prof_lines+=analyse_prof(CudaProfiler.prof())
             with open(prof_path, "a") as f:
                 f.writelines([line + "\n" for line in prof_lines])
             print("\n".join(prof_lines))
@@ -378,6 +393,8 @@ if __name__ == "__main__":
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
+    parser.add_argument("--single-img",action="store_true",help="Generate single image")
+    
     args = parser.parse_args()
     
     # arguments check
@@ -417,4 +434,5 @@ if __name__ == "__main__":
         assert args.ep_async, "Use latest score is only available when using EP async."
     if args.ep_share_cache:
         assert args.ep_async, "Shared cache is only available when using EP async."
+    
     main(args)

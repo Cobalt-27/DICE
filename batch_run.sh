@@ -1,15 +1,14 @@
 #!/bin/bash
 
 # 定义想要变化的参数，例如 per_proc_batch_size 的不同值
-batch_sizes=(4 8 16 32 64 128)
+batch_sizes=(4 8 16 32 64)
 
-combinations=("nnnnn" "nnyyy" "ynnnn" "yynny" "yyyyy" )
-# combinations=("yyyy" )
+# combinations=( "ynnnn" "yynnn")
+combinations=("nnnnn" )
 
 for combination in "${combinations[@]}"; do
     echo "Running with combination: $combination"
     
-
     for batch_size in "${batch_sizes[@]}"; do
         echo "Running with per-process batch size: $batch_size"
 
@@ -28,7 +27,7 @@ ${combination:1:1}
 ${combination:2:1}
 ${combination:3:1}
 ${combination:4:1}
-8
+1
 $batch_size
 $auto_gc
 n
@@ -38,7 +37,7 @@ n
 0
 0
 0
-0
+n
 
 
 

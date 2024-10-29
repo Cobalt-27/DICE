@@ -27,7 +27,7 @@ case $choice in
         ;;
     4)
         model="DiT-G/2"
-        ckpt_path="/root/autodl-tmp/dit_moe_g_16E2A.pt"
+        ckpt_path="/root/autodl-tmp/models/dit_moe_g_16E2A.pt"
         num_experts=16
         ;;
     *)
@@ -122,6 +122,13 @@ sp_async_warm_up=${sp_async_warm_up:-0}
 
 read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
 ep_async_cool_down=${ep_async_cool_down:-0}
+
+read -p "Use --single-img? (y/n, default n): " use_single_img
+use_single_img=${use_single_img:-n}
+if [ "$use_single_img" = "y" ]; then
+    extra_args+=" --single-img"
+fi
+
 
 # read -p "Enter cache prefetch (default None): " cache_prefetch
 
