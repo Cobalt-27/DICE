@@ -68,7 +68,7 @@ def main(args):
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
-
+    print(f"args.ckpt:{args.ckpt}")
     if args.ckpt is None:
         assert args.model == "DiT-XL/2", "Only DiT-XL/2 models are available for auto-download."
         assert args.image_size in [256, 512]
@@ -100,12 +100,17 @@ def main(args):
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
     state_dict = find_model(ckpt_path)
+    # Only for performance testing, we can generate larger images but the quality will be poor
+    if args.image_size != 256:
+        assert 'pos_embed' in state_dict, "Custom checkpoints must have 'pos_embed' key."
+        del state_dict['pos_embed']
+
     if args.para_mode.ep:
         """
         NOTE: trim unused experts, for ep only
         """
         state_dict = trim_state_dict(state_dict, args.num_experts)
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict, strict=args.image_size == 256)
     
     model.eval()  # important!
     if rf:
@@ -122,7 +127,7 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    folder_name = f"test-{model_string_name}-bs-{args.per_proc_batch_size}" \
+    folder_name = f"check--{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
                 f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}" \
@@ -214,8 +219,7 @@ def main(args):
             y = torch.cat(y_list, dim=0)
             # we gather all z and y to rank0, so that sp is able to produce the same samples as DP and EP
             # latent in rank0 will be scattered to all ranks later
-            
-        
+
         torch.cuda.synchronize()
         time_start = time.time()
         CudaProfiler.prof().start('total')
@@ -378,6 +382,8 @@ if __name__ == "__main__":
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
+    parser.add_argument("--single-img",action="store_true",help="Generate single image")
+    
     args = parser.parse_args()
     
     # arguments check
@@ -417,4 +423,5 @@ if __name__ == "__main__":
         assert args.ep_async, "Use latest score is only available when using EP async."
     if args.ep_share_cache:
         assert args.ep_async, "Shared cache is only available when using EP async."
+    
     main(args)

@@ -96,7 +96,7 @@ class RectifiedFlow(torch.nn.Module):
                 ep_to_vc()
             if para_mode.sp and para_mode.sp_async:
                 sp_to_vc()
-
+   
             # ep_cache_clear()
             vc = self.model(z, t, cond) 
             
