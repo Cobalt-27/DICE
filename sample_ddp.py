@@ -209,7 +209,19 @@ def main(args):
         if args.para_mode.sp_async:
             sp_cache_clear()
         prof_lines=[]
-          
+        z = torch.randn(bs, model.in_channels, latent_size, latent_size, device=device)
+        y = torch.randint(0, args.num_classes, (bs,), device=device)
+        
+        if args.para_mode.sp and not args.single_img:
+            z_list = [torch.zeros_like(z) for _ in range(dist.get_world_size())]
+            y_list = [torch.zeros_like(y) for _ in range(dist.get_world_size())]
+            dist.all_gather(z_list, z)
+            dist.all_gather(y_list, y)
+            z = torch.cat(z_list, dim=0)
+            y = torch.cat(y_list, dim=0)
+            # we gather all z and y to rank0, so that sp is able to produce the same samples as DP and EP
+            # latent in rank0 will be scattered to all ranks later
+
         torch.cuda.synchronize()
         time_start = time.time()
         CudaProfiler.prof().start('total')
