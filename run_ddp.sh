@@ -123,6 +123,12 @@ sp_async_warm_up=${sp_async_warm_up:-0}
 read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
 ep_async_cool_down=${ep_async_cool_down:-0}
 
+read -p "Use --ep-reordered-cfg? (y/n, default n): " use_ep_reordered_cfg
+use_ep_reordered_cfg=${use_ep_reordered_cfg:-n}
+if [ "$use_ep_reordered_cfg" = "y" ]; then
+    extra_args+=" --ep-reordered-cfg"
+fi
+
 read -p "Use --single-img? (y/n, default n): " use_single_img
 use_single_img=${use_single_img:-n}
 if [ "$use_single_img" = "y" ]; then
