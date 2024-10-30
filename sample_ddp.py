@@ -127,10 +127,10 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    folder_name = f"OriginalT1030--{model_string_name}-bs-{args.per_proc_batch_size}" \
+    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
-                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}" \
+                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}" \
                 f"{'' if args.extra_name is None else f'-{args.extra_name}'}"
     if dist.get_rank() == 0:
         print(f"Saving samples to folder: {folder_name}")
@@ -151,7 +151,7 @@ def main(args):
     if rank == 0:
         # print(f"Total number of images that will be sampled: {total_samples}")
         print(f"Sampling {total_samples} images with batch size {bs} on {dist.get_world_size()} workers.")
-    assert total_samples % dist.get_world_size() == 0, "total_samples must be divisible by world_size"
+    # assert total_samples % dist.get_world_size() == 0, "total_samples must be divisible by world_size"
     samples_needed_this_gpu = int(total_samples // dist.get_world_size())
     assert samples_needed_this_gpu % bs == 0, "samples_needed_this_gpu must be divisible by the per-GPU batch size"
     iterations = int(samples_needed_this_gpu // bs)
@@ -209,7 +209,19 @@ def main(args):
         if args.para_mode.sp_async:
             sp_cache_clear()
         prof_lines=[]
-          
+        z = torch.randn(bs, model.in_channels, latent_size, latent_size, device=device)
+        y = torch.randint(0, args.num_classes, (bs,), device=device)
+        
+        if args.para_mode.sp and not args.single_img:
+            z_list = [torch.zeros_like(z) for _ in range(dist.get_world_size())]
+            y_list = [torch.zeros_like(y) for _ in range(dist.get_world_size())]
+            dist.all_gather(z_list, z)
+            dist.all_gather(y_list, y)
+            z = torch.cat(z_list, dim=0)
+            y = torch.cat(y_list, dim=0)
+            # we gather all z and y to rank0, so that sp is able to produce the same samples as DP and EP
+            # latent in rank0 will be scattered to all ranks later
+            
         torch.cuda.synchronize()
         time_start = time.time()
         CudaProfiler.prof().start('total')
@@ -251,8 +263,8 @@ def main(args):
         if args.trim_samples:
             samples = samples[:samples.shape[0] // bs] # keep only one sample per batch
 
-        if args.single_img:
-            samples = samples[:samples.shape[0] // dist.get_world_size()]
+        
+            
         if not rf and using_cfg:
             samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
         
@@ -300,15 +312,16 @@ def main(args):
         vae.enable_slicing()
         torch.cuda.reset_peak_memory_stats()
 
-        samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
-        samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
-        
-        if not args.trim_samples:
-            assert len(samples) == bs, f"Expected {bs} samples, got {len(samples)}"
-        # Save samples to disk as individual .png files
-        for i, sample in enumerate(samples):
-            index = i * dist.get_world_size() + rank + total
-            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
+        if (not args.single_img or rank == 0) and args.image_size <= 1024:
+            samples = vae.decode(samples / 0.18215).sample # magic number due to normalization in the VAE
+            samples = torch.clamp(127.5 * samples + 128.0, 0, 255).permute(0, 2, 3, 1).to("cpu", dtype=torch.uint8).numpy()
+            print(f"rank:{rank} samples.shape:{samples.shape}")
+            if not args.trim_samples:
+                assert len(samples) == bs, f"Expected {bs} samples, got {len(samples)}"
+            # Save samples to disk as individual .png files
+            for i, sample in enumerate(samples):
+                index = i * dist.get_world_size() + rank + total
+                Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
         total += global_batch_size
 
         peak_memory_allocated_when_vae = torch.cuda.max_memory_allocated() / (1024 * 1024)
@@ -348,7 +361,7 @@ if __name__ == "__main__":
     parser.add_argument("--per-proc-batch-size", type=int, default=32)
     parser.add_argument("--num-fid-samples", type=int, default=50_000)
     parser.add_argument('--num-experts', default=16, type=int,) 
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--image-size", type=int,  default=256) #choices=[256, 512,1024,4096],
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--cfg-scale",  type=float, default=1.5)
     parser.add_argument("--num-sampling-steps", type=int, default=250)
