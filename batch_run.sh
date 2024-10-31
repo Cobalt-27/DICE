@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # 定义想要变化的参数，例如 per_proc_batch_size 的不同值
-batch_sizes=(4 8 16 32 64)
+batch_sizes=(4 8 16 32 64 128)
 model_names=(1 4)
-combinations=("yynnn"  "ynnnn" "nnyyn") # 
+combinations=("yynnn" "ynnnn" "nnyyn") # 
 
 for model_name in "${model_names[@]}"; do
     for combination in "${combinations[@]}"; do

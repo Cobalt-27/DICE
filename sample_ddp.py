@@ -391,6 +391,7 @@ if __name__ == "__main__":
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
+    parser.add_argument("--ep-reordered-cfg", action="store_true", help="Reordered CFG for EP")
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
@@ -405,6 +406,13 @@ if __name__ == "__main__":
                               ep_async_warm_up=args.ep_async_warm_up,strided_sync =args.strided_sync,
                               sp_async_warm_up=args.sp_async_warm_up, ep_async_cool_down=args.ep_async_cool_down
                               )
+    
+    assert not args.offload, "Offload is no longer used."
+    assert args.cache_prefetch is None, "Prefetch is no longer used."
+    assert args.cache_stride is None, "Stride is no longer used."
+    
+    if args.ep_reordered_cfg:
+        assert args.ep_async, "Reordered CFG is only available when using EP async."
     
     if not args.para_mode.ep_async:
         assert not args.offload, "offload is only available when using DiEP."

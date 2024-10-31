@@ -1,7 +1,7 @@
 import torch 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist 
-from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache
+from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache, ep_reordered_cfg
 from seqpara.df import sp_to_vc,sp_to_vu
 from .warmup import ep_requireSync,sp_requireSync
 
@@ -91,17 +91,31 @@ class RectifiedFlow(torch.nn.Module):
                 if para_mode.sp_async:
                     sp_requireSync(i, sample_steps, para_mode)
             
+            def vc_infer():
+                if para_mode.ep and para_mode.ep_async and ep_separate_cache():
+                    ep_to_vc()
+                if para_mode.sp and para_mode.sp_async:
+                    sp_to_vc()
+    
+                # ep_cache_clear()
+                vc = self.model(z, t, cond)
+                if self.learn_sigma == True: 
+                    vc, _ = vc.chunk(2, dim=1)  
+                return vc
             
-            if para_mode.ep and para_mode.ep_async and ep_separate_cache():
-                ep_to_vc()
-            if para_mode.sp and para_mode.sp_async:
-                sp_to_vc()
-   
-            # ep_cache_clear()
-            vc = self.model(z, t, cond) 
+            """
+            reordered cfg
             
-            if self.learn_sigma == True: 
-                vc, _ = vc.chunk(2, dim=1)  
+            original:
+            vc -> vu -> vc -> vu -> ...
+            
+            reordered:
+            vc -> vu -> vu -> vc -> vc -> vu -> ...
+            """
+            vc = None
+            if not ep_reordered_cfg() or (ep_reordered_cfg() and i%2==0):
+                vc = vc_infer()
+            
             if null_cond is not None:
                 if para_mode.ep and para_mode.ep_async and ep_separate_cache():
                     ep_to_vu()
@@ -115,6 +129,11 @@ class RectifiedFlow(torch.nn.Module):
                 vu = self.model(z, t, null_cond) 
                 if self.learn_sigma == True: 
                     vu, _ = vu.chunk(2, dim=1) 
+                
+                if ep_reordered_cfg() and i%2==1:
+                    assert vc is None and not ep_separate_cache()
+                    vc = vc_infer()
+                
                 vc = vu + cfg * (vc - vu)
             x = z - i * dt * vc
             z = z - dt * vc
