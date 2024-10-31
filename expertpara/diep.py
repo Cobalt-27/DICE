@@ -44,8 +44,11 @@ def ep_cached_tensors_size():
 def ep_separate_cache():
     return _use_separate_cache
 
+def ep_reordered_cfg():
+    return _use_reorder_cfg
+
 def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, 
-                  offload_mask=None,separate_cache =True):
+                  offload_mask=None,separate_cache =True, use_reorder_cfg=False):
     if not offload:
         assert prefetch_size == None
     global _diep_cache_dispatch, _diep_cache_combine
@@ -68,6 +71,9 @@ def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=No
     global _use_separate_cache
     
     _use_separate_cache =separate_cache
+    
+    global _use_reorder_cfg
+    _use_reorder_cfg = use_reorder_cfg
 
     if separate_cache:
         global _diep_cache_dispatch_vc, _diep_cache_combine_vc,_diep_cache_dispatch_vu,_diep_cache_combine_vu,is_vc
