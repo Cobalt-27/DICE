@@ -127,11 +127,11 @@ def main(args):
 
     # Create folder to save samples:
     model_string_name = args.model.split("/")[0]
-    folder_name = f"{model_string_name}-bs-{args.per_proc_batch_size}" \
+    folder_name = f"{'' if args.extra_name is None else f'{args.extra_name}--'}{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
-                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}" \
-                f"{'' if args.extra_name is None else f'-{args.extra_name}'}"
+                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"
+                
     if dist.get_rank() == 0:
         print(f"Saving samples to folder: {folder_name}")
         

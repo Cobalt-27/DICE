@@ -36,7 +36,7 @@ case $choice in
         ;;
 esac
 vae_path="/mnt/vae"
-image_size=256
+# image_size=256
 extra_args=""
 
 read -p "Use --ep? (y/n, default n): " use_ep
@@ -80,6 +80,9 @@ per_proc_batch_size=${per_proc_batch_size:-4}
 # Ask the user if they want to include optional arguments
 # Initialize extra_args as an empty string
 
+read -p "Enter image size (default 256): " image_size
+image_size=${image_size:-256}
+
 
 read -p "Use --auto-gc? (y/n, default n): " use_auto_gc
 use_auto_gc=${use_auto_gc:-n}
@@ -122,12 +125,6 @@ sp_async_warm_up=${sp_async_warm_up:-0}
 
 read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
 ep_async_cool_down=${ep_async_cool_down:-0}
-
-read -p "Use --ep-reordered-cfg? (y/n, default n): " use_ep_reordered_cfg
-use_ep_reordered_cfg=${use_ep_reordered_cfg:-n}
-if [ "$use_ep_reordered_cfg" = "y" ]; then
-    extra_args+=" --ep-reordered-cfg"
-fi
 
 read -p "Use --single-img? (y/n, default n): " use_single_img
 use_single_img=${use_single_img:-n}

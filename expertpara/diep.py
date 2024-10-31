@@ -30,6 +30,8 @@ _diep_cache_combine = None
 _CACHE_DISPATCH_VAL_LEN = 7
 _CACHE_COMBINE_VAL_LEN = 5
 
+_use_reorder_cfg = False
+
 max_mem = -1
 def ep_cached_tensors_size():
     """
