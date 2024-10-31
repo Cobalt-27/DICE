@@ -88,12 +88,14 @@ class All2AllCache:
     """
 
     def _try_release_entry_gpu_mem(self, idx):
+        raise NotImplementedError("Offload no longer used")
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
             recv_buf.release_gpu_mem_if_possible()
 
     def _try_offload_entry(self, idx):
+        raise NotImplementedError("Offload no longer used")
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
@@ -104,12 +106,14 @@ class All2AllCache:
         self.cache[idx] = tuple(value)
 
     def _try_prefetch_entry(self, idx):
+        raise NotImplementedError("Offload no longer used")
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
             recv_buf.async_prefetch()
 
     def _wait_entry_if_needed(self, idx):
+        raise NotImplementedError("Offload no longer used")
         value = list(self.cache[idx])
         recv_buf = value[RECV_BUF_IDX]
         if isinstance(recv_buf, AsyncTensorOffloading):
@@ -119,6 +123,7 @@ class All2AllCache:
         self.cache[idx] = tuple(value)
 
     def _offload_and_prefetch(self, current_idx):
+        raise NotImplementedError("Offload no longer used")
         """
         current_idx: the index being accessed
         
@@ -174,7 +179,7 @@ class All2AllCache:
         
         assert isinstance(key, int)
         if self.offload and self.offload_mask[key]:
-            with CudaProfiler.scope(f"cache.wait"):
+            with CudaProfiler.scope(f"cache.wait", cpu=True):
                 self._wait_entry_if_needed(key)
             # with CudaProfiler.scope(f"cache.offload&prefetch"):
             #     self._offload_and_prefetch(key)
