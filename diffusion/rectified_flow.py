@@ -113,7 +113,7 @@ class RectifiedFlow(torch.nn.Module):
             vc -> vu -> vu -> vc -> vc -> vu -> ...
             """
             vc = None
-            if not ep_reordered_cfg() or (ep_reordered_cfg() and i%2==0):
+            if not (para_mode.ep and para_mode.ep_async) or not ep_reordered_cfg() or (ep_reordered_cfg() and i%2==0):
                 vc = vc_infer()
             
             if null_cond is not None:
@@ -130,7 +130,7 @@ class RectifiedFlow(torch.nn.Module):
                 if self.learn_sigma == True: 
                     vu, _ = vu.chunk(2, dim=1) 
                 
-                if ep_reordered_cfg() and i%2==1:
+                if para_mode.ep and para_mode.ep_async and ep_reordered_cfg() and i%2==1:
                     assert vc is None and not ep_separate_cache()
                     vc = vc_infer()
                 
