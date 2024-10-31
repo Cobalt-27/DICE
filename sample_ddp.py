@@ -190,6 +190,7 @@ def main(args):
             prefetch_size=args.cache_prefetch,
             offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
             separate_cache=(not args.ep_share_cache) and rf,
+            use_reorder_cfg=args.ep_reordered_cfg,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
