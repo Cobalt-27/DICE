@@ -2,8 +2,8 @@
 
 # 定义想要变化的参数，例如 per_proc_batch_size 的不同值
 batch_sizes=(4 8 16 32 64 128)
-model_names=(1 4)
-combinations=("yynnn" "ynnnn" "nnyyn") # 
+model_names=(1)
+combinations=("nnnnn") # 
 
 for model_name in "${model_names[@]}"; do
     for combination in "${combinations[@]}"; do
@@ -27,7 +27,7 @@ ${combination:1:1}
 ${combination:2:1}
 ${combination:3:1}
 ${combination:4:1}
-8
+1
 $batch_size
 $auto_gc
 n
