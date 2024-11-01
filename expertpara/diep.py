@@ -30,8 +30,6 @@ _diep_cache_combine = None
 _CACHE_DISPATCH_VAL_LEN = 7
 _CACHE_COMBINE_VAL_LEN = 5
 
-_use_reorder_cfg = False
-
 max_mem = -1
 def ep_cached_tensors_size():
     """
@@ -46,36 +44,21 @@ def ep_cached_tensors_size():
 def ep_separate_cache():
     return _use_separate_cache
 
-def ep_reordered_cfg():
-    return _use_reorder_cfg
-
-def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=None, 
-                  offload_mask=None,separate_cache =True, use_reorder_cfg=False):
-    if not offload:
-        assert prefetch_size == None
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True):
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(
         capacity=cache_capacity,
         auto_gc=auto_gc,
-        prefetch_size=prefetch_size,
-        offload=offload,
         val_len=_CACHE_DISPATCH_VAL_LEN,
-        offload_mask=offload_mask,
     )
     _diep_cache_combine = All2AllCache(
         capacity=cache_capacity,
         auto_gc=auto_gc,
-        prefetch_size=prefetch_size,
-        offload=offload,
         val_len=_CACHE_COMBINE_VAL_LEN,
-        offload_mask=offload_mask,
     )
     global _use_separate_cache
     
     _use_separate_cache =separate_cache
-    
-    global _use_reorder_cfg
-    _use_reorder_cfg = use_reorder_cfg
 
     if separate_cache:
         global _diep_cache_dispatch_vc, _diep_cache_combine_vc,_diep_cache_dispatch_vu,_diep_cache_combine_vu,is_vc
@@ -84,19 +67,13 @@ def ep_cache_init(cache_capacity, auto_gc=False, offload=False, prefetch_size=No
         _diep_cache_dispatch_vu = All2AllCache(
             capacity=cache_capacity,
             auto_gc=auto_gc,
-            prefetch_size=prefetch_size,
-            offload=offload,
             val_len=_CACHE_DISPATCH_VAL_LEN,
-            offload_mask=offload_mask,
             cl_name= '_diep_cache_dispatch_vu'
         )
         _diep_cache_combine_vu = All2AllCache(
             capacity=cache_capacity,
             auto_gc=auto_gc,
-            prefetch_size=prefetch_size,
-            offload=offload,
             val_len=_CACHE_COMBINE_VAL_LEN,
-            offload_mask=offload_mask,
             cl_name = '_diep_cache_combine_vu' 
         )
         _diep_cache_dispatch_vc.cl_name = '_diep_cache_dispatch_vc'

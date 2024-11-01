@@ -1,7 +1,6 @@
 import pytest
 import torch
 from expertpara.ep_cache import All2AllCache
-from expertpara.offload import AsyncTensorOffloading
 import random
 
 # Set a global random seed for all tests
@@ -34,14 +33,12 @@ def setup_cache():
     # Fixture to create a cache instance for testing
     capacity = 4
     auto_gc = False
-    offload = False
-    prefetch_size = 0
     val_len = 3  # At least 3: handles, recv_buf, send_buf
-    cache = All2AllCache(capacity=capacity, val_len=val_len, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size)
+    cache = All2AllCache(capacity=capacity, val_len=val_len, auto_gc=auto_gc)
     return cache
 
 def test_cache_size():
-    cache = All2AllCache(capacity=10,val_len=3, auto_gc=False, offload=False)
+    cache = All2AllCache(capacity=10,val_len=3, auto_gc=False)
     # Clear caches before starting
     # Test 1: Check cache size when caches are empty
     assert cache.tensors_size() == 0, "Cache size should be 0 when empty."
@@ -101,10 +98,8 @@ def test_gc_behavior():
     # Initialize cache with auto_gc=True
     capacity = 2
     auto_gc = True
-    offload = False
-    prefetch_size = 0
     val_len = 3
-    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, val_len=val_len)
 
     # Create sample tensors
     tensor = torch.randn(10, 10, device='cuda')
@@ -126,58 +121,20 @@ def test_gc_behavior():
     # After GC, send_buf should be cleared
     assert cache.get(0)[2] is None  # send_buf is cleared
 
-def test_offloading_behavior():
-    # Initialize cache with offloading enabled
-    capacity = 3
-    auto_gc = False
-    offload = True
-    prefetch_size = 0
-    val_len = 3
-    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
-
-    # Create sample tensors
-    tensor1 = torch.randn(10, 10, device='cuda')
-    tensor2 = torch.randn(10, 10, device='cuda')
-    send_buf1 = torch.randn(5, 5, device='cuda')
-    send_buf2 = torch.randn(5, 5, device='cuda')
-
-    # Create dummy handles that are completed
-    handles1 = [make_dummy_handle(completed=True)]
-    handles2 = [make_dummy_handle(completed=True)]
-
-    arbitrary_tensor_op()
-    cache.put(0, (handles1, tensor1.clone(), send_buf1.clone()))
-    arbitrary_tensor_op()
-    cache.put(1, (handles2, tensor2.clone(), send_buf2.clone()))
-    arbitrary_tensor_op()
-
-    # Access (put) entry 0 to trigger offloading of other entries
-    cache.put(0, (handles1, tensor1.clone(), send_buf1.clone()))
-    arbitrary_tensor_op()
-    # Entry 1 should be offloaded
-    entry1 = cache.cache[1]
-    recv_buf1 = entry1[1]
-    assert isinstance(recv_buf1, AsyncTensorOffloading)
-
 import pytest
 
 # Define settings as pytest parameters
-@pytest.mark.parametrize("auto_gc, offload, prefetch_size", [
-    (False, False, None),
-    (True, False, None),
-    (True, True, 0),
-    (True, True, 1),
-    (True, True, 2),
-    (False, True, 0),
-    (False, True, 1),
+@pytest.mark.parametrize("auto_gc", [
+    False,
+    True
 ])
-def test_random_operations(auto_gc, offload, prefetch_size):
+def test_random_operations(auto_gc):
     import random
 
     capacity = 100
     val_len = 3
 
-    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
+    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, val_len=val_len)
     sim_cache = [None] * capacity  # Simulated simple cache
 
     for _ in range(1000):
@@ -200,45 +157,6 @@ def test_random_operations(auto_gc, offload, prefetch_size):
                 cache_entry = cache.get(idx)
                 # Handle offloading
                 recv_buf_cache = cache_entry[1]
-                assert not isinstance(recv_buf_cache, AsyncTensorOffloading)
                 arbitrary_tensor_op()
                 # Compare results
                 assert torch.equal(recv_buf_cache, sim_entry[1])
-
-def test_offloading_async_behavior():
-    import random
-    import time
-
-    capacity = 5
-    auto_gc = False
-    offload = True
-    prefetch_size = 2
-    val_len = 3
-    cache = All2AllCache(capacity=capacity, auto_gc=auto_gc, offload=offload, prefetch_size=prefetch_size, val_len=val_len)
-    sim_cache = [None] * capacity
-
-    # Initialize cache entries
-    for idx in range(capacity):
-        tensor = torch.full((10, 10), idx, device='cuda')
-        send_buf = torch.full((5, 5), idx, device='cuda')
-        handles = [make_dummy_handle(completed=True)]
-        cache.put(idx, (handles, tensor.clone(), send_buf.clone()))
-        sim_cache[idx] = (handles, tensor.clone(), send_buf.clone())
-
-    # Access entries in random order
-    indices = list(range(capacity))
-    random.shuffle(indices)
-    for idx in indices:
-        cache_entry = cache.get(idx)
-        sim_entry = sim_cache[idx]
-
-        # Insert arbitrary tensor operations
-        time.sleep(0.1)  # Simulate delay
-        arbitrary_tensor_op()
-        recv_buf_cache = cache_entry[1]
-        assert not isinstance(recv_buf_cache, AsyncTensorOffloading)
-
-        arbitrary_tensor_op()
-
-        # Verify correctness
-        assert torch.equal(recv_buf_cache, sim_entry[1])

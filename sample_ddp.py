@@ -129,7 +129,7 @@ def main(args):
     model_string_name = args.model.split("/")[0]
     folder_name = f"{'' if args.extra_name is None else f'{args.extra_name}--'}{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
-                f"-prefetch-{args.cache_prefetch}-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
+                f"-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
                 f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"
                 
     if dist.get_rank() == 0:
@@ -180,17 +180,11 @@ def main(args):
             f.write(formatted_args)
 
     if args.para_mode.ep and args.para_mode.ep_async:
-        if args.offload and args.cache_stride is not None:
-            strided_offload_mask = lambda stride: [ (True if i % stride == 0 else False) for i in range(model.depth)]
         
         ep_cache_init(
             cache_capacity=model.depth,
             auto_gc=args.auto_gc,
-            offload=args.offload,
-            prefetch_size=args.cache_prefetch,
-            offload_mask=strided_offload_mask(args.cache_stride) if args.cache_stride is not None else None,
             separate_cache=(not args.ep_share_cache) and rf,
-            use_reorder_cfg=args.ep_reordered_cfg,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
@@ -383,16 +377,12 @@ if __name__ == "__main__":
     parser.add_argument("--ep-async", action="store_true", help="Use asynchronous ExpertPara.")
     
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
-    parser.add_argument("--offload", action="store_true", help="Offload cache to CPU.")
-    parser.add_argument("--cache-prefetch", type=int, default=None, help="prefetch size for cache offloading")
-    parser.add_argument("--cache-stride", type=int, default=None, help="stride size for partial offloading")
     
     parser.add_argument("--ep-async-warm-up", type=int, default=0, help="Enable ep async warm-up feature (default: 0)")
     parser.add_argument("--ep-async-cool-down", type=int, default=0, help="Enable ep async cool-down feature (default: 0)")
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
-    parser.add_argument("--ep-reordered-cfg", action="store_true", help="Reordered CFG for EP")
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
@@ -408,21 +398,8 @@ if __name__ == "__main__":
                               sp_async_warm_up=args.sp_async_warm_up, ep_async_cool_down=args.ep_async_cool_down
                               )
     
-    assert not args.offload, "Offload is no longer used."
-    assert args.cache_prefetch is None, "Prefetch is no longer used."
-    assert args.cache_stride is None, "Stride is no longer used."
+
     
-    if args.ep_reordered_cfg:
-        assert args.ep_async, "Reordered CFG is only available when using EP async."
-    
-    if not args.para_mode.ep_async:
-        assert not args.offload, "offload is only available when using DiEP."
-        assert args.cache_prefetch is None, "cache_prefetch is only available when using DiEP."
-        assert args.cache_stride is None, "cache_stride is only available when using DiEP."
-    else:
-        if not args.offload:
-            assert args.cache_prefetch is None, "cache_prefetch is only available when using offload."
-            assert args.cache_stride is None, "cache_stride is only available when using offload."
     if not args.para_mode.sp_async and not args.para_mode.ep_async:
         assert not args.auto_gc, "auto_gc is only available when using asynchronous operations."
     if args.ep_async_warm_up > 0:

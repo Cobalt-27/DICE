@@ -1,5 +1,4 @@
 import torch
-from .offload import AsyncTensorOffloading
 from cudaprof.prof import CudaProfiler
 
 """
@@ -34,6 +33,8 @@ AUTO GC:
 Free send_buf after all2all completes
 
 OFFLOADING:
+
+NO LONGER USED
 Move recv_buf to cpu after all2all completes, move it back when time is ripe
 
 Since the layers are access in a ring (layer 1..L then 1). 
@@ -63,13 +64,11 @@ def is_completed(handles):
 
 import torch.distributed as dist
 class All2AllCache:
-    def __init__(self, capacity, val_len, auto_gc, offload, prefetch_size = None, offload_mask = None,cl_name = None):
+    def __init__(self, capacity, val_len, auto_gc, cl_name = None):
         """
         capacity: the number of entries in the cache
         auto_gc: automatically clear send buffer after all2all completes
-        prefetch_size: the size of the recv_buf to keep in GPU, 0 for no prefetch
         val_len: the length of the value tuple
-        offload: whether to offload each recv_buf to CPU
         """ 
         self.capacity = capacity
         self.auto_gc = auto_gc
@@ -77,70 +76,10 @@ class All2AllCache:
         self.val_len = (
             val_len  # len of the value tuple, useful to avoid missing items in tuple
         )
-        self.offload = offload
-        self.prefetch_size = prefetch_size
-        self.offload_mask = offload_mask if offload_mask is not None else [True] * capacity
-        if self.offload:
-            assert prefetch_size is not None
         self.cl_name = cl_name
     """
     NOTE: the second item in the value tuple is the recv_buf
     """
-
-    def _try_release_entry_gpu_mem(self, idx):
-        raise NotImplementedError("Offload no longer used")
-        value = list(self.cache[idx])
-        recv_buf = value[RECV_BUF_IDX]
-        if isinstance(recv_buf, AsyncTensorOffloading):
-            recv_buf.release_gpu_mem_if_possible()
-
-    def _try_offload_entry(self, idx):
-        raise NotImplementedError("Offload no longer used")
-        value = list(self.cache[idx])
-        recv_buf = value[RECV_BUF_IDX]
-        if isinstance(recv_buf, AsyncTensorOffloading):
-            return
-        assert isinstance(recv_buf, torch.Tensor)
-        offloaded = AsyncTensorOffloading(recv_buf)
-        value[1] = offloaded
-        self.cache[idx] = tuple(value)
-
-    def _try_prefetch_entry(self, idx):
-        raise NotImplementedError("Offload no longer used")
-        value = list(self.cache[idx])
-        recv_buf = value[RECV_BUF_IDX]
-        if isinstance(recv_buf, AsyncTensorOffloading):
-            recv_buf.async_prefetch()
-
-    def _wait_entry_if_needed(self, idx):
-        raise NotImplementedError("Offload no longer used")
-        value = list(self.cache[idx])
-        recv_buf = value[RECV_BUF_IDX]
-        if isinstance(recv_buf, AsyncTensorOffloading):
-            recv_buf = recv_buf.wait()
-            
-        value[RECV_BUF_IDX] = recv_buf
-        self.cache[idx] = tuple(value)
-
-    def _offload_and_prefetch(self, current_idx):
-        raise NotImplementedError("Offload no longer used")
-        """
-        current_idx: the index being accessed
-        
-        We iterate across the cache in a ring-style, offloading and prefetching the recv_buf
-        - Try to prefetch back the next prefetch_size entries
-        - For other entries, try to offload the recv_buf
-        - Noted that we can only TRY to prefetch/offload, the all2all of any entry is not guaranteed to be completed
-        """
-        for i in range(1,self.capacity): # skip the current_idx, since it's being accessed
-            idx = (current_idx + i) % self.capacity
-            if self.cache[idx] is not None and self.offload_mask[idx]:
-                if is_completed(self.cache[idx][HANDLES_IDX]):
-                    if i <= self.prefetch_size:
-                        self._try_prefetch_entry(idx)
-                    else:
-                        self._try_offload_entry(idx)
-                    self._try_release_entry_gpu_mem(idx)
 
     def clear(self):
         self.cache = [None] * self.capacity
@@ -161,14 +100,6 @@ class All2AllCache:
 
         if self.auto_gc:
             self._gc()
-        """
-        NOTE:
-        Putting offload checks here because in cache warm-up iteration, we are only putting items.
-        Must trigger offloading here to ease the peak memory usage.
-        """
-        if self.offload and self.offload_mask[key]:
-            with CudaProfiler.scope(f"cache.offload&prefetch"):
-                self._offload_and_prefetch(key)
         self.cache[key] = value
 
     # @CudaProfiler.prof_func('cache.get')
@@ -178,11 +109,6 @@ class All2AllCache:
         #         print(f'get from {self.cl_name}')
         
         assert isinstance(key, int)
-        if self.offload and self.offload_mask[key]:
-            with CudaProfiler.scope(f"cache.wait", cpu=True):
-                self._wait_entry_if_needed(key)
-            # with CudaProfiler.scope(f"cache.offload&prefetch"):
-            #     self._offload_and_prefetch(key)
         assert isinstance(self.cache[key][RECV_BUF_IDX], torch.Tensor)
         return self.cache[key]
 
@@ -214,9 +140,7 @@ class All2AllCache:
                 (
                     x.element_size() * x.numel()
                     if isinstance(x, torch.Tensor)
-                    else (
-                        x.gpu_mem_size() if isinstance(x, AsyncTensorOffloading) else 0
-                    )
+                    else 0
                 )
                 for x in v
             ) if v is not None else 0
