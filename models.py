@@ -330,7 +330,8 @@ class SparseMoeBlock(nn.Module):
                     cache_key=self.cache_key,
                 ).view(*orig_shape)
         if self.n_shared_experts is not None:
-            y = y + self.shared_experts(identity)
+            with CudaProfiler.scope('moe.mlp_shared'):
+                y = y + self.shared_experts(identity)
         return y
     
 

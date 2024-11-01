@@ -1,7 +1,7 @@
 import torch 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist 
-from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache
+from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache, ep_set_step
 from seqpara.df import sp_to_vc,sp_to_vu
 from .warmup import ep_requireSync,sp_requireSync
 
@@ -87,6 +87,7 @@ class RectifiedFlow(torch.nn.Module):
 
             if para_mode is not None:
                 if para_mode.ep_async:
+                    ep_set_step(i)
                     ep_requireSync(i, sample_steps, para_mode)
                 if para_mode.sp_async:
                     sp_requireSync(i, sample_steps, para_mode)

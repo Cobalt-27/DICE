@@ -147,3 +147,51 @@ class All2AllCache:
             for 
             v in self.cache
         )
+
+class EPSkipCache:
+    """
+    cache to help skip non-share experts
+    skipping: dispatch + non-share mlp + combine
+    stores the result of previous step's combine
+    """
+    def __init__(self, capacity):
+        """
+        capacity: the number of entries in the cache
+        auto_gc: automatically clear send buffer after all2all completes
+        val_len: the length of the value tuple
+        """ 
+        self.capacity = capacity
+        self.cache = [None] * capacity
+
+    """
+    NOTE: the second item in the value tuple is the recv_buf
+    """
+
+    def clear(self):
+        self.cache = [None] * self.capacity
+
+    def put(self, key, tensor):
+        assert isinstance(key, int)
+        assert isinstance(tensor, torch.Tensor)
+        self.cache[key] = tensor
+
+    def get(self, key):
+        assert isinstance(key, int)
+        assert isinstance(self.cache[key], torch.Tensor)
+        return self.cache[key]
+
+    def contains(self, key):
+        assert isinstance(key, int)
+        return self.cache[key] is not None
+
+    def tensors_size(self):
+        """
+        Returns the size of all the tensors in the cache in bytes.
+        """
+        # return 0
+        
+        return sum(
+            x.element_size() * x.numel() if isinstance(x, torch.Tensor) else 0
+            for x in self.cache
+        )
+    

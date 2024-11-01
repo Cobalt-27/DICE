@@ -185,6 +185,7 @@ def main(args):
             cache_capacity=model.depth,
             auto_gc=args.auto_gc,
             separate_cache=(not args.ep_share_cache) and rf,
+            comm_step = args.ep_async_comm_step,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
@@ -383,6 +384,7 @@ if __name__ == "__main__":
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
+    parser.add_argument("--ep-async-comm-step", type=int, default=1, help="comm stride")
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")

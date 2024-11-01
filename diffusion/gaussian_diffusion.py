@@ -12,6 +12,7 @@ import enum
 
 from .diffusion_utils import discretized_gaussian_log_likelihood, normal_kl
 from .warmup import ep_requireSync,sp_requireSync
+from expertpara.diep import ep_set_step
 
 def mean_flat(tensor):
     """
@@ -502,6 +503,7 @@ class GaussianDiffusion:
             # model_kwargs['async_pause'] = False
             if para_mode is not None:
                 t_scalar = t[0].item()
+                ep_set_step(t_scalar)
                 ep_requireSync(t_scalar, para_mode.num_sampling_steps, para_mode)
                 sp_requireSync(t_scalar, para_mode.num_sampling_steps, para_mode)                
 

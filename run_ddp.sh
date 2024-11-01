@@ -123,6 +123,9 @@ sp_async_warm_up=${sp_async_warm_up:-0}
 read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
 ep_async_cool_down=${ep_async_cool_down:-0}
 
+read -p "Use --ep-async-comm-step? (default 1): " ep_async_comm_step
+ep_async_comm_step=${ep_async_comm_step:-1}
+
 # read -p "Use --ep-reordered-cfg? (y/n, default n): " use_ep_reordered_cfg
 # use_ep_reordered_cfg=${use_ep_reordered_cfg:-n}
 # if [ "$use_ep_reordered_cfg" = "y" ]; then
@@ -185,6 +188,7 @@ function save_run_command {
     echo "--strided-sync $strided_sync \\" >> "$output_script"
     echo "--sp-async-warm-up $sp_async_warm_up \\" >> "$output_script"
     echo "--ep-async-cool-down $ep_async_cool_down \\" >> "$output_script"
+    echo "--ep-async-comm-step $ep_async_comm_step \\" >> "$output_script"
     echo "$extra_args" >> "$output_script"
 
     chmod +x "$output_script"
@@ -208,4 +212,5 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --strided-sync $strided_sync \
 --sp-async-warm-up $sp_async_warm_up \
 --ep-async-cool-down $ep_async_cool_down \
+--ep-async-comm-step $ep_async_comm_step \
 $extra_args

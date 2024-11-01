@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
-from .diep import global_combine_async,global_dispatch_async
+from .diep import global_combine_async,global_dispatch_async, get_result_to_skip, put_result_for_skip, ep_should_try_skip, ep_skip_enabled
 from cudaprof.prof import CudaProfiler
 # ref: https://github.com/laekov/fastmoe
 
@@ -30,10 +30,21 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
             [#input tokens * num_experts_per_tok].
         num_total_experts (int): Total number of experts in the model.
         num_experts_per_tok (int): Number of experts assigned to each token.
+        async_op (bool): Whether to use async all2all for dispatch and combine.
+        cache_key (int): Cache key to store and retrieve intermediate results.
+        skip_if_possible (bool): Whether to skip the current step if possible.
     Returns:
         Tensor: Output tensor after processing by the experts.
     """
-    
+    if async_op:
+        skip_if_possible=ep_should_try_skip()
+        if skip_if_possible:
+            assert ep_skip_enabled(), "skip_if_possible is True but skip is not enabled"
+            prev_result = get_result_to_skip(cache_key)
+            if prev_result is not None: 
+                # prev_result can be none: first step / cache cleared to perform strided sync
+                assert prev_result.shape == inp.shape, f"{prev_result.shape} != {inp.shape}"
+                return prev_result
     """
     NOTE: each worker has num_local_experts, with index = global_rank + i * world_size
     """
@@ -138,6 +149,9 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     # [#input tokens * num_experts_per_tok, h] -> [#input tokens, h]
     expert_out = outp_dup.view(inp.size(0), num_experts_per_tok, inp.size(1)).sum(dim=1)
     assert expert_out.shape == inp.shape, f"{expert_out.shape} != {inp.shape}"
+    if async_op and ep_skip_enabled():
+        # only cache the result if async all2all is used
+        put_result_for_skip(cache_key, expert_out)
     return expert_out
 
 @torch.no_grad()

@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
 from cudaprof.prof import CudaProfiler
-from .ep_cache import All2AllCache
+from .ep_cache import All2AllCache, EPSkipCache
 """
 DiEP: Diffusion model with async Expert Parallelism
 
@@ -27,6 +27,11 @@ format:
 """
 _diep_cache_combine = None
 
+"""
+stores all2all combine results, for each layer, used to skip all2all and mlps in some steps
+"""
+_diep_cache_skip = None
+
 _CACHE_DISPATCH_VAL_LEN = 7
 _CACHE_COMBINE_VAL_LEN = 5
 
@@ -37,14 +42,41 @@ def ep_cached_tensors_size():
     """
     if _use_separate_cache:
         return _diep_cache_dispatch_vc.tensors_size()+ _diep_cache_combine_vc.tensors_size()+\
-                    _diep_cache_dispatch_vu.tensors_size()+_diep_cache_combine_vu.tensors_size()
+                    _diep_cache_dispatch_vu.tensors_size()+_diep_cache_combine_vu.tensors_size()+\
+                        _diep_cache_skip_vc.tensors_size()+_diep_cache_skip_vu.tensors_size()
     else:
-        return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
+        return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()+\
+                    _diep_cache_skip.tensors_size()
+
+def ep_set_step(step):
+    global _step
+    _step = step
 
 def ep_separate_cache():
     return _use_separate_cache
 
-def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True):
+def ep_should_try_skip():
+    """
+    Decide whether to skip the current step.
+    """
+    if not _enable_skip:
+        return False
+    return _step % _comm_step != 0
+
+def ep_skip_enabled():
+    return _enable_skip
+   
+
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1):
+    
+    global _comm_step
+    """
+    perform all2all every comm_step steps, for other steps, skip all2all and mlp via cache_skip
+    """
+    _comm_step = comm_step
+    global _enable_skip
+    _enable_skip = comm_step != 1
+    
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(
         capacity=cache_capacity,
@@ -55,6 +87,11 @@ def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True):
         capacity=cache_capacity,
         auto_gc=auto_gc,
         val_len=_CACHE_COMBINE_VAL_LEN,
+    )
+    
+    global _diep_cache_skip
+    _diep_cache_skip = EPSkipCache(
+        capacity=cache_capacity if _enable_skip else 0,
     )
     global _use_separate_cache
     
@@ -78,11 +115,20 @@ def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True):
         )
         _diep_cache_dispatch_vc.cl_name = '_diep_cache_dispatch_vc'
         _diep_cache_combine_vc.cl_name = '_diep_cache_combine_vc'
+        
+        global _diep_cache_skip_vc, _diep_cache_skip_vu
+        _diep_cache_skip_vu = _diep_cache_skip
+        _diep_cache_skip_vc = EPSkipCache(
+            capacity=cache_capacity if _enable_skip else 0,
+        )
 
 def ep_to_vc():
     assert _use_separate_cache, "Only the RectifiedFlow can make ep cache space change"
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch, _diep_cache_combine = _diep_cache_dispatch_vc,_diep_cache_combine_vc
+    
+    global _diep_cache_skip
+    _diep_cache_skip = _diep_cache_skip_vc
 
     global is_vc 
     is_vc = True
@@ -92,6 +138,9 @@ def ep_to_vu():
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch, _diep_cache_combine = _diep_cache_dispatch_vu,_diep_cache_combine_vu
 
+    global _diep_cache_skip
+    _diep_cache_skip = _diep_cache_skip_vu
+    
     global is_vc
     is_vc = False
 
@@ -104,9 +153,25 @@ def ep_cache_clear():
         _diep_cache_combine_vu.clear()
         _diep_cache_dispatch_vc.clear()
         _diep_cache_combine_vc.clear()
+        _diep_cache_skip_vu.clear()
+        _diep_cache_skip_vc.clear()
     else:
         _diep_cache_dispatch.clear()
         _diep_cache_combine.clear()
+        _diep_cache_skip.clear()
+
+def get_result_to_skip(key):
+    """
+    Get the previous result to skip the current step.
+    """
+    return _diep_cache_skip.get(key)
+
+def put_result_for_skip(key, tensor):
+    """
+    Put the result for the next step to skip the current step.
+    """
+    assert isinstance(tensor, torch.Tensor)
+    _diep_cache_skip.put(key, tensor)
 
 @torch.no_grad()
 def _wait(handles):
