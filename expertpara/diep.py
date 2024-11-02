@@ -55,19 +55,26 @@ def ep_set_step(step):
 def ep_separate_cache():
     return _use_separate_cache
 
-def ep_should_try_skip():
+def ep_should_try_skip(idx):
     """
     Decide whether to skip the current step.
     """
     if not _enable_skip:
         return False
-    return _step % _comm_step != 0
+    if _intra_step_skip:
+        return _step % _comm_step != idx % _comm_step
+    else:
+        return _step % _comm_step != 0
+
+def ep_wait():
+    _diep_cache_dispatch.wait()
+    _diep_cache_combine.wait()
 
 def ep_skip_enabled():
     return _enable_skip
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1):
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1, intra_step_skip = False):
     
     global _comm_step
     """
@@ -76,6 +83,8 @@ def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step
     _comm_step = comm_step
     global _enable_skip
     _enable_skip = comm_step != 1
+    global _intra_step_skip
+    _intra_step_skip = intra_step_skip
     
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(
@@ -213,9 +222,9 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     # if dist.get_rank() == 0:
     #     print(is_vc)
         
-    CudaProfiler.prof().start('global_dispatch.wait', cpu=True)
+    # CudaProfiler.prof().start('global_dispatch.wait', cpu=True)
     _wait(prev_handles)
-    CudaProfiler.prof().stop('global_dispatch.wait', cpu=True)
+    # CudaProfiler.prof().stop('global_dispatch.wait', cpu=True)
     # async all2all, to be received in next step
     buf, handles = global_dispatch(
         grouped_dup_inp=grouped_dup_inp,
@@ -260,9 +269,9 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         prev_flat_expert_weights,
         prev_send_buf
         ) = _diep_cache_combine.get(cache_key)
-    CudaProfiler.prof().start('global_combine.wait', cpu=True)
+    # CudaProfiler.prof().start('global_combine.wait', cpu=True)
     _wait(prev_handles)
-    CudaProfiler.prof().stop('global_combine.wait', cpu=True)
+    # CudaProfiler.prof().stop('global_combine.wait', cpu=True)
     # async all2all, to be received in next step
     buf, handles = global_combine(
         grouped_dup_outp=grouped_dup_outp,

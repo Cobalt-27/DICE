@@ -37,7 +37,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
         Tensor: Output tensor after processing by the experts.
     """
     if async_op:
-        skip_if_possible=ep_should_try_skip()
+        skip_if_possible=ep_should_try_skip(cache_key)
         if skip_if_possible:
             assert ep_skip_enabled(), "skip_if_possible is True but skip is not enabled"
             prev_result = get_result_to_skip(cache_key)
@@ -63,9 +63,14 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
         expanded_counts[:token_counts_local.size(0)] = token_counts_local
         token_counts_local = expanded_counts
     
+    with CudaProfiler.scope('moe.wait', cpu=True):
+        from .diep import ep_wait
+        ep_wait()
+    
     # NOTE: refer to exchange_token_counts for details, counts of tokens routed to this worker's local experts for all workers.
-    # used for dispatch recv and combine send
-    token_counts_global = exchange_token_counts(token_counts_local)
+    with CudaProfiler.scope('exchange_token_counts'):
+        # used for dispatch recv and combine send
+        token_counts_global = exchange_token_counts(token_counts_local)
     assert token_counts_local.size(0) == num_total_experts and token_counts_global.size() == (world_size,num_local_experts)
     
     # Local Dispatch
@@ -119,8 +124,8 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                         cache_key=cache_key)
             grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # MLP
-    
-    mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
+    with CudaProfiler.scope('moe.mlp'):
+        mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
     # NOTE: Global Combine
     # mapping: [#combined tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
     with CudaProfiler.scope('global_combine'):
@@ -163,8 +168,7 @@ def proc_experts(inp, experts, token_counts_global, num_local_experts):
     start = 0
     for i in range(num_local_experts):
         e = global_rank + i * world_size
-        with CudaProfiler.scope('moe.mlp'):
-            outp[start:start+mlp_token_counts[i]] = experts[e](inp[start:start+mlp_token_counts[i]])
+        outp[start:start+mlp_token_counts[i]] = experts[e](inp[start:start+mlp_token_counts[i]])
         start += mlp_token_counts[i]
     assert start == inp.size(0)
     return outp
@@ -192,7 +196,8 @@ def exchange_token_counts(token_counts_local):
 
     # gather token counts from all workers
     token_counts_local_list = [torch.zeros_like(token_counts_local) for _ in range(world_size)]
-    dist.all_gather(token_counts_local_list, token_counts_local)
+    with CudaProfiler.scope('exchange_token_counts.all_gather'):
+        dist.all_gather(tensor_list=token_counts_local_list, tensor=token_counts_local)
 
     # Stack the counts into a tensor of shape [world_size, num_total_experts]
     # Each row corresponds to a worker's expert_local_tokens_count

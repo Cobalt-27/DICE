@@ -81,6 +81,14 @@ class All2AllCache:
     NOTE: the second item in the value tuple is the recv_buf
     """
 
+    def wait(self):
+        for key in range(self.capacity):        
+            if self.cache[key] is not None:
+                handles = self.cache[key][HANDLES_IDX]
+                if handles is not None:
+                    for handle in handles:
+                        handle.wait()
+    
     def clear(self):
         self.cache = [None] * self.capacity
 
@@ -177,7 +185,6 @@ class EPSkipCache:
 
     def get(self, key):
         assert isinstance(key, int)
-        assert isinstance(self.cache[key], torch.Tensor)
         return self.cache[key]
 
     def contains(self, key):

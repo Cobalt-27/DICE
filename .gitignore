@@ -3,3 +3,4 @@
 __pycache__/
 samples/
 **/.pytest_cache/
+last_run_ddp_param.sh
