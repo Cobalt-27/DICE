@@ -128,7 +128,7 @@ def _all_gather_async_cache(x_local,key, cache, concat_dim):
     
     prev_handle, prev_x_list, prev_x = cache.get(key)
     if prev_handle is not None:
-        with CudaProfiler.scope("all_gather.wait", cpu=True):
+        with CudaProfiler.scope("all_gather.wait"):
             prev_handle.wait()
     """
     NOTE: prev_x_list are kv tensors in previous step, have to replace the current rank's tensor with the new one
@@ -152,7 +152,7 @@ def _all_gather_async_mngr(k_local, v_local, idx, concat_dim):
         comm_manager.create_buffer()
     
     if comm_manager.handles[idx] is not None:
-        with CudaProfiler.scope("all_gather.wait", cpu=True):
+        with CudaProfiler.scope("all_gather.wait"):
             comm_manager.handles[idx].wait()
     else:
         # cache is empty

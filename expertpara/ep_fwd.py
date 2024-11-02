@@ -63,9 +63,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
         expanded_counts[:token_counts_local.size(0)] = token_counts_local
         token_counts_local = expanded_counts
     
-    with CudaProfiler.scope('moe.wait', cpu=True):
-        from .diep import ep_wait
-        ep_wait()
+    if async_op:
+        with CudaProfiler.scope('moe.wait'):
+            from .diep import ep_wait
+            ep_wait()
     
     # NOTE: refer to exchange_token_counts for details, counts of tokens routed to this worker's local experts for all workers.
     with CudaProfiler.scope('exchange_token_counts'):
@@ -237,19 +238,21 @@ def global_dispatch(grouped_dup_inp, token_counts_local, token_counts_global, as
     send_start = 0
     recv_start = 0
     handle_list = []
-    CudaProfiler.prof().start('global_dispatch.call_dist')
     for i in range(num_local_experts):
-        handle=dist.all_to_all_single(
-            output=buf[recv_start:recv_start+recv_size[i]],
-            input=grouped_dup_inp[send_start:send_start+send_size[i]],
-            output_split_sizes=token_counts_global[:,i].flatten().tolist(),
-            input_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
-            async_op=async_op,
-        )
+        with CudaProfiler.scope('global_dispatch.call_dist'):
+            handle=dist.all_to_all_single(
+                output=buf[recv_start:recv_start+recv_size[i]],
+                input=grouped_dup_inp[send_start:send_start+send_size[i]],
+                output_split_sizes=token_counts_global[:,i].flatten().tolist(),
+                input_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
+                async_op=True,
+            )
+        with CudaProfiler.scope('moe.wait'):
+            if not async_op:
+                handle.wait()
         handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
-    CudaProfiler.prof().stop('global_dispatch.call_dist')
     assert send_start == grouped_dup_inp.size(0) and recv_start == buf.size(0)
     return buf, handle_list
 
@@ -284,19 +287,21 @@ def global_combine(grouped_dup_outp, token_counts_local, token_counts_global, as
     send_start = 0
     recv_start = 0
     handle_list = []
-    CudaProfiler.prof().start('global_combine.call_dist')
     for i in range(num_local_experts):
-        handle=dist.all_to_all_single(
-            output=buf[recv_start:recv_start+recv_size[i]],
-            input=grouped_dup_outp[send_start:send_start+send_size[i]],
-            output_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
-            input_split_sizes=token_counts_global[:,i].flatten().tolist(),
-            async_op=async_op,
-        )
+        with CudaProfiler.scope('global_combine.call_dist'):
+            handle=dist.all_to_all_single(
+                output=buf[recv_start:recv_start+recv_size[i]],
+                input=grouped_dup_outp[send_start:send_start+send_size[i]],
+                output_split_sizes=token_counts_local[i*world_size:(i+1)*world_size].flatten().tolist(),
+                input_split_sizes=token_counts_global[:,i].flatten().tolist(),
+                async_op=True,
+            )
+        with CudaProfiler.scope('moe.wait'):
+            if not async_op:
+                handle.wait()
         handle_list.append(handle)
         recv_start += recv_size[i]
         send_start += send_size[i]
-    CudaProfiler.prof().stop('global_combine.call_dist')
     assert send_start == grouped_dup_outp.size(0) and recv_start == buf.size(0)
     return buf, handle_list
 

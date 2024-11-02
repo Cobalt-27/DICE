@@ -222,9 +222,9 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     # if dist.get_rank() == 0:
     #     print(is_vc)
         
-    # CudaProfiler.prof().start('global_dispatch.wait', cpu=True)
+    # CudaProfiler.prof().start('global_dispatch.wait')
     _wait(prev_handles)
-    # CudaProfiler.prof().stop('global_dispatch.wait', cpu=True)
+    # CudaProfiler.prof().stop('global_dispatch.wait')
     # async all2all, to be received in next step
     buf, handles = global_dispatch(
         grouped_dup_inp=grouped_dup_inp,
@@ -269,9 +269,9 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         prev_flat_expert_weights,
         prev_send_buf
         ) = _diep_cache_combine.get(cache_key)
-    # CudaProfiler.prof().start('global_combine.wait', cpu=True)
+    # CudaProfiler.prof().start('global_combine.wait')
     _wait(prev_handles)
-    # CudaProfiler.prof().stop('global_combine.wait', cpu=True)
+    # CudaProfiler.prof().stop('global_combine.wait')
     # async all2all, to be received in next step
     buf, handles = global_combine(
         grouped_dup_outp=grouped_dup_outp,
