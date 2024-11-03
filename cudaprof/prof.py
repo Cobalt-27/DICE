@@ -57,7 +57,7 @@ class CudaProfiler:
         # Check if CPU timing or CUDA event timing is used
         cpu = self.events[name]['cpu']
         total_time = self.events[name]['elapsed']
-        
+        total_count = len(self.events[name]['start'])
         # Accumulate new times
         if cpu:
             for start, end in zip(self.events[name]['start'], self.events[name]['end']):
@@ -71,17 +71,18 @@ class CudaProfiler:
         self.events[name]['elapsed'] = total_time
         self.events[name]['start'] = []
         self.events[name]['end'] = []
-
-        return total_time
+        avg_time = total_time / total_count if total_count > 0 else 0
+        return total_time, avg_time
 
     def get_all_elapsed_times(self):
         """
         Returns a dictionary of the accumulated elapsed times for each recorded event.
         """
-        times = {}
+        total_times = {}
+        avg_times = {}
         for name in self.events:
-            times[name] = self.elapsed_time(name)
-        return times
+            total_times[name], avg_times[name] = self.elapsed_time(name)
+        return total_times, avg_times
 
     def sync(self):
         """
