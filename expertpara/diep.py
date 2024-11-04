@@ -77,6 +77,28 @@ def ep_skip_this_step(idx):
         return False
     return _step % _comm_step != 0
 
+_rand_mask = None
+
+def ep_skip_mask(len):
+    mask = torch.zeros(len, dtype=torch.bool)
+    if _skip_mode == 'high':
+        mask[1::2] = True
+        return mask
+    elif _skip_mode == 'low':
+        mask[::2] = True
+        return mask
+    elif _skip_mode == 'rand':
+        global _rand_mask
+        if _rand_mask is None:
+            n = len//2
+            bool_tensor = torch.zeros((n, 2), dtype=torch.bool)
+            random_indices = torch.randint(0, 2, (n,))
+            bool_tensor[torch.arange(n), random_indices] = True
+            _rand_mask = bool_tensor.view(-1)
+        return _rand_mask
+    else:
+        raise ValueError(f"Unknown skip mode: {_skip_mode}")
+
 def ep_wait():
     _diep_cache_dispatch.wait()
     _diep_cache_combine.wait()
@@ -85,7 +107,7 @@ def ep_skip_enabled():
     return _enable_skip
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1):
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1, skip_mode = None):
     
     global _comm_step
     """
@@ -94,6 +116,17 @@ def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step
     _comm_step = comm_step
     global _enable_skip
     _enable_skip = comm_step != 1
+    """
+    skip mode
+    high: skip tokens with high router scores
+    low: skip tokens with low router scores
+    random: skip tokens randomly
+    None: no skip
+    """
+    if _enable_skip:
+        assert skip_mode is not None
+    global _skip_mode
+    _skip_mode = skip_mode
     
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(

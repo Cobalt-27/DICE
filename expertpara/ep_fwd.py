@@ -45,16 +45,21 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     num_local_experts = num_total_experts // world_size
     assert num_total_experts % world_size == 0, "Number of experts must be divisible by world size"
     
+    if async_op and ep_skip_enabled():
+        from .diep import ep_skip_mask
+        skip_mask = ep_skip_mask(flat_expert_indices.size(0))
+        retain_mask = ~skip_mask
+    
     """
     Prepare to skip(drop) commu and comp of unimportant tokens
     Drop tokens with lower router scores
     """
     if async_op and ep_skip_this_step(cache_key):
         assert ep_skip_enabled(), "skip_if_possible is True but skip is not enabled"
-        assert num_experts_per_tok % 2 == 0, "num_experts_per_tok must be even"
+        assert num_experts_per_tok == 2, "only support num_experts_per_tok == 2"
         original_num_experts_per_tok = num_experts_per_tok
         num_experts_per_tok //= 2
-        flat_expert_indices = flat_expert_indices[::2]
+        flat_expert_indices = flat_expert_indices[retain_mask]
         # not dropping the weights, since they are only used in scaling the output
         assert flat_expert_indices.size(0) == inp.size(0) * num_experts_per_tok
     else:
@@ -168,10 +173,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
             # unimporant tokens are dropped
             dropped = get_result_to_skip(cache_key) # use the cached result for all dropped positions
             final_outp = outp_dup.new_empty((outp_dup.size(0) * 2, outp_dup.size(1)))
-            final_outp[::2] = outp_dup
-            final_outp[1::2] = dropped
+            final_outp[retain_mask] = outp_dup
+            final_outp[skip_mask] = dropped
         else:
-            put_result_for_skip(cache_key, outp_dup[1::2]) # cache the dropped positions
+            put_result_for_skip(cache_key, outp_dup[skip_mask]) # cache the dropped positions
             final_outp = outp_dup
     else:
         final_outp = outp_dup

@@ -126,6 +126,12 @@ ep_async_cool_down=${ep_async_cool_down:-0}
 read -p "Use --ep-async-comm-step? (default 1): " ep_async_comm_step
 ep_async_comm_step=${ep_async_comm_step:-1}
 
+read -p "Enter --ep-async-skip-strategy (default None): " ep_async_skip_strategy
+ep_async_skip_strategy=${ep_async_skip_strategy:-None}
+if [ "$ep_async_skip_strategy" != "None" ]; then
+    extra_args+=" --ep-async-skip-strategy $ep_async_skip_strategy"
+fi
+
 # read -p "Use --ep-async-intra-step-skip? (y/n, default n): " use_ep_async_intra_step_skip
 # use_ep_async_intra_step_skip=${use_ep_async_intra_step_skip:-n}
 # if [ "$use_ep_async_intra_step_skip" = "y" ]; then

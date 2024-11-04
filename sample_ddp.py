@@ -130,7 +130,8 @@ def main(args):
     folder_name = f"{'' if args.extra_name is None else f'{args.extra_name}--'}{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
-                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"
+                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"\
+                f"-commStep-{args.ep_async_comm_step}-skipStrategy-{args.ep_async_skip_strategy}"
                 
     if dist.get_rank() == 0:
         print(f"Saving samples to folder: {folder_name}")
@@ -186,6 +187,7 @@ def main(args):
             auto_gc=args.auto_gc,
             separate_cache=(not args.ep_share_cache) and rf,
             comm_step = args.ep_async_comm_step,
+            skip_mode= args.ep_async_skip_strategy,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
@@ -385,6 +387,7 @@ if __name__ == "__main__":
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
     parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
     parser.add_argument("--ep-async-comm-step", type=int, default=1, help="comm stride")
+    parser.add_argument("--ep-async-skip-strategy", type=str, default=None, choices=['low', 'high', 'rand'], help="comm strategy")
     
     parser.add_argument("--sp-legacy-cache", action="store_true", help="Use legacy SP cache implementation")
     parser.add_argument("--ep-score-use-latest", action="store_true", help="Use latest router score in EP")
