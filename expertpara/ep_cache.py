@@ -185,7 +185,10 @@ class EPSkipCache:
 
     def get(self, key):
         assert isinstance(key, int)
-        return self.cache[key]
+        value = self.cache[key]
+        self.cache[key] = None
+        # clear it so that it raises error if it's used again
+        return value
 
     def contains(self, key):
         assert isinstance(key, int)

@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torch.distributed as dist
-from .diep import global_combine_async,global_dispatch_async, get_result_to_skip, put_result_for_skip, ep_should_try_skip, ep_skip_enabled
+from .diep import global_combine_async,global_dispatch_async, get_result_to_skip, put_result_for_skip, ep_skip_this_step, ep_skip_enabled
 from cudaprof.prof import CudaProfiler
 # ref: https://github.com/laekov/fastmoe
 
@@ -36,15 +36,6 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     Returns:
         Tensor: Output tensor after processing by the experts.
     """
-    if async_op:
-        skip_if_possible=ep_should_try_skip(cache_key)
-        if skip_if_possible:
-            assert ep_skip_enabled(), "skip_if_possible is True but skip is not enabled"
-            prev_result = get_result_to_skip(cache_key)
-            if prev_result is not None: 
-                # prev_result can be none: first step / cache cleared to perform strided sync
-                assert prev_result.shape == inp.shape, f"{prev_result.shape} != {inp.shape}"
-                return prev_result
     """
     NOTE: each worker has num_local_experts, with index = global_rank + i * world_size
     """
@@ -53,6 +44,22 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     num_total_experts = len(experts)
     num_local_experts = num_total_experts // world_size
     assert num_total_experts % world_size == 0, "Number of experts must be divisible by world size"
+    
+    """
+    Prepare to skip(drop) commu and comp of unimportant tokens
+    Drop tokens with lower router scores
+    """
+    if async_op and ep_skip_this_step(cache_key):
+        assert ep_skip_enabled(), "skip_if_possible is True but skip is not enabled"
+        assert num_experts_per_tok % 2 == 0, "num_experts_per_tok must be even"
+        original_num_experts_per_tok = num_experts_per_tok
+        num_experts_per_tok //= 2
+        flat_expert_indices = flat_expert_indices[::2]
+        # not dropping the weights, since they are only used in scaling the output
+        assert flat_expert_indices.size(0) == inp.size(0) * num_experts_per_tok
+    else:
+        original_num_experts_per_tok = num_experts_per_tok
+        
     
     # NOTE: Tensor of size [num_total_experts], counts of tokens routed to each expert on the local worker.
     token_counts_local = flat_expert_indices.bincount()
@@ -66,6 +73,10 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     if async_op:
         with CudaProfiler.scope('moe.wait'):
             from .diep import ep_wait
+            """
+            NOTE: wait for the previous async all2all to finish
+            Call wait here to precisely measure the time, otherwise handles are waited in the following all_gather
+            """
             ep_wait()
     
     # NOTE: refer to exchange_token_counts for details, counts of tokens routed to this worker's local experts for all workers.
@@ -92,6 +103,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
     with CudaProfiler.scope('local_dispatch'):
         # mapping: [#input tokens, h] -> [#input tokens * num_experts_per_tok, h]
         grouped_dup_inp = _local_dispatch(inp=inp, pos=grouped_idx) 
+        grouped_idx = None # no longer needed
     
     """
     NOTE
@@ -123,7 +135,7 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                         grouped_idx_dup=grouped_idx_dup,
                                         flat_expert_weights=flat_expert_weights,
                                         cache_key=cache_key)
-            grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+            # grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # MLP
     with CudaProfiler.scope('moe.mlp'):
         mlp_outp = proc_experts(inp=mlp_inp, experts=experts, token_counts_global=token_counts_global, num_local_experts=num_local_experts)
@@ -143,21 +155,34 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                         grouped_idx_dup=grouped_idx_dup,
                                         flat_expert_weights=flat_expert_weights,
                                         cache_key=cache_key)
-            grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+            # grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
     # Local combine
     with CudaProfiler.scope('local_combine'):
         # mapping: [#input tokens * num_experts_per_tok, h] -> [#input tokens * num_experts_per_tok, h]
-        outp_dup = _local_combine(inp=grouped_dup_outp, pos=grouped_idx_dup, out_size=flat_expert_indices.size(0))
-    if _use_latest_expert_weights:
-        outp_dup.mul_(latest_flat_expert_weights) # flat_expert_weights is updated in global_combine_async
-    else:
-        outp_dup.mul_(flat_expert_weights) # flat_expert_weights is NOT updated in async all2all
-    # [#input tokens * num_experts_per_tok, h] -> [#input tokens, h]
-    expert_out = outp_dup.view(inp.size(0), num_experts_per_tok, inp.size(1)).sum(dim=1)
-    assert expert_out.shape == inp.shape, f"{expert_out.shape} != {inp.shape}"
+        outp_dup = _local_combine(inp=grouped_dup_outp, pos=grouped_idx_dup, out_size=grouped_dup_outp.size(0))
+    
     if async_op and ep_skip_enabled():
-        # only cache the result if async all2all is used
-        put_result_for_skip(cache_key, expert_out)
+        # cache the unimportant tokens, as they can be used in the next step
+        if outp_dup.size(0) != inp.size(0) * original_num_experts_per_tok:
+            assert outp_dup.size(0) == inp.size(0) * original_num_experts_per_tok // 2
+            # unimporant tokens are dropped
+            dropped = get_result_to_skip(cache_key) # use the cached result for all dropped positions
+            final_outp = outp_dup.new_empty((outp_dup.size(0) * 2, outp_dup.size(1)))
+            final_outp[::2] = outp_dup
+            final_outp[1::2] = dropped
+        else:
+            put_result_for_skip(cache_key, outp_dup[1::2]) # cache the dropped positions
+            final_outp = outp_dup
+    else:
+        final_outp = outp_dup
+        
+    if _use_latest_expert_weights:
+        final_outp.mul_(latest_flat_expert_weights) # flat_expert_weights is updated in global_combine_async
+    else:
+        final_outp.mul_(flat_expert_weights) # flat_expert_weights is NOT updated in async all2all
+    # [#input tokens * num_experts_per_tok, h] -> [#input tokens, h]
+    expert_out = final_outp.view(inp.size(0), original_num_experts_per_tok, inp.size(1)).sum(dim=1)
+    assert expert_out.shape == inp.shape, f"{expert_out.shape} != {inp.shape}"
     return expert_out
 
 @torch.no_grad()

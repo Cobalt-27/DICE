@@ -126,11 +126,11 @@ ep_async_cool_down=${ep_async_cool_down:-0}
 read -p "Use --ep-async-comm-step? (default 1): " ep_async_comm_step
 ep_async_comm_step=${ep_async_comm_step:-1}
 
-read -p "Use --ep-async-intra-step-skip? (y/n, default n): " use_ep_async_intra_step_skip
-use_ep_async_intra_step_skip=${use_ep_async_intra_step_skip:-n}
-if [ "$use_ep_async_intra_step_skip" = "y" ]; then
-    extra_args+=" --ep-async-intra-step-skip"
-fi
+# read -p "Use --ep-async-intra-step-skip? (y/n, default n): " use_ep_async_intra_step_skip
+# use_ep_async_intra_step_skip=${use_ep_async_intra_step_skip:-n}
+# if [ "$use_ep_async_intra_step_skip" = "y" ]; then
+#     extra_args+=" --ep-async-intra-step-skip"
+# fi
 
 # read -p "Use --ep-reordered-cfg? (y/n, default n): " use_ep_reordered_cfg
 # use_ep_reordered_cfg=${use_ep_reordered_cfg:-n}

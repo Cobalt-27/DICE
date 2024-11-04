@@ -40,13 +40,26 @@ def ep_cached_tensors_size():
     """
     Measures the size of all the tensors in the cache in bytes.
     """
+    return ep_all2all_cached_tensors_size() + ep_skip_cached_tensors_size()
+                    
+def ep_all2all_cached_tensors_size():
+    """
+    Measures the size of all the tensors in the cache in bytes.
+    """
     if _use_separate_cache:
         return _diep_cache_dispatch_vc.tensors_size()+ _diep_cache_combine_vc.tensors_size()+\
-                    _diep_cache_dispatch_vu.tensors_size()+_diep_cache_combine_vu.tensors_size()+\
-                        _diep_cache_skip_vc.tensors_size()+_diep_cache_skip_vu.tensors_size()
+                    _diep_cache_dispatch_vu.tensors_size()+_diep_cache_combine_vu.tensors_size()
     else:
-        return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()+\
-                    _diep_cache_skip.tensors_size()
+        return _diep_cache_dispatch.tensors_size() + _diep_cache_combine.tensors_size()
+    
+def ep_skip_cached_tensors_size():
+    """
+    Measures the size of all the tensors in the cache in bytes.
+    """
+    if _use_separate_cache:
+        return _diep_cache_skip_vc.tensors_size()+_diep_cache_skip_vu.tensors_size()
+    else:
+        return _diep_cache_skip.tensors_size()
 
 def ep_set_step(step):
     global _step
@@ -55,16 +68,14 @@ def ep_set_step(step):
 def ep_separate_cache():
     return _use_separate_cache
 
-def ep_should_try_skip(idx):
+def ep_skip_this_step(idx):
     """
-    Decide whether to skip the current step.
+    Decide whether to skip unimportant tokens in this step.
     """
-    if not _enable_skip:
+    if not _enable_skip or not _diep_cache_skip.contains(idx):
+        # disabled, or no cache due to first step
         return False
-    if _intra_step_skip:
-        return _step % _comm_step != idx % _comm_step
-    else:
-        return _step % _comm_step != 0
+    return _step % _comm_step != 0
 
 def ep_wait():
     _diep_cache_dispatch.wait()
@@ -74,7 +85,7 @@ def ep_skip_enabled():
     return _enable_skip
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1, intra_step_skip = False):
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1):
     
     global _comm_step
     """
@@ -83,8 +94,6 @@ def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step
     _comm_step = comm_step
     global _enable_skip
     _enable_skip = comm_step != 1
-    global _intra_step_skip
-    _intra_step_skip = intra_step_skip
     
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(
