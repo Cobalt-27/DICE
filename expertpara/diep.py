@@ -82,10 +82,10 @@ _rand_mask = None
 def ep_skip_mask(len):
     mask = torch.zeros(len, dtype=torch.bool)
     if _skip_mode == 'high':
-        mask[1::2] = True
+        mask[::2] = True # skip the first token of each pair, the higher score one
         return mask
     elif _skip_mode == 'low':
-        mask[::2] = True
+        mask[1::2] = True # skip the second token of each pair
         return mask
     elif _skip_mode == 'rand':
         global _rand_mask
