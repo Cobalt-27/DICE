@@ -33,7 +33,8 @@ except Exception as e:
 
 class ParaMode():
     def __init__(self, ep=False, ep_async=False, sp=False, sp_async=False,
-                 num_sampling_steps= None,ep_async_warm_up = None, strided_sync = None, ep_async_cool_down = None,sp_async_warm_up = None):
+                 num_sampling_steps= None,ep_async_warm_up = None, strided_sync = None, ep_async_cool_down = None,
+                 sp_async_warm_up = None, ep_async_mode = None):
         self.ep = ep
         self.ep_async = ep_async
         if ep_async:
@@ -51,6 +52,7 @@ class ParaMode():
         self.strided_sync = strided_sync
         self.sp_async_warm_up = sp_async_warm_up
         self.ep_async_cool_down = ep_async_cool_down
+        self.ep_async_mode = ep_async_mode
             
     def verbose(self):
         if self.dp:
@@ -322,7 +324,21 @@ class SparseMoeBlock(nn.Module):
             else:
                 from expertpara.ep_fwd import moe_infer_ep
                 from expertpara.diep import ep_skip_mask, ep_skip_now, ep_skip_enabled
-                ep_async_op = self.para_mode.ep_async if self.layer_idx < 14 else False
+                
+                if self.para_mode.ep_async:
+                    if self.para_mode.ep_async_mode == 'shallow':
+                        ep_async_op = self.layer_idx < self.total_layers//2
+                    elif self.para_mode.ep_async_mode == 'deep':
+                        ep_async_op = self.layer_idx >= self.total_layers//2
+                    elif self.para_mode.ep_async_mode == 'all':
+                        ep_async_op = True
+                    elif self.para_mode.ep_async_mode == 'interleaved':
+                        ep_async_op = self.layer_idx % 2 == 0
+                    else:
+                        raise ValueError(f"Invalid ep_async_mode: {self.para_mode.ep_async_mode}")
+                else:
+                    ep_async_op = False
+                    
                 partial_skip = ep_skip_enabled()
                 # print(f"ep_async_op: {ep_async_op} {self.layer_idx} {self.total_layers}")
                 y = moe_infer_ep(

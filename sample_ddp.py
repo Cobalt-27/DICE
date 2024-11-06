@@ -381,6 +381,7 @@ if __name__ == "__main__":
     
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     
+    parser.add_argument("--ep-async-mode", type=str, default=None, choices=['shallow', 'deep', 'interleaved', 'all'], help="async EP strategy")
     parser.add_argument("--ep-async-warm-up", type=int, default=0, help="Enable ep async warm-up feature (default: 0)")
     parser.add_argument("--ep-async-cool-down", type=int, default=0, help="Enable ep async cool-down feature (default: 0)")
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
@@ -400,7 +401,8 @@ if __name__ == "__main__":
     args.para_mode = ParaMode(sp=args.sp, sp_async=args.sp_async, ep=args.ep, 
                               ep_async=args.ep_async,num_sampling_steps= args.num_sampling_steps,
                               ep_async_warm_up=args.ep_async_warm_up,strided_sync =args.strided_sync,
-                              sp_async_warm_up=args.sp_async_warm_up, ep_async_cool_down=args.ep_async_cool_down
+                              sp_async_warm_up=args.sp_async_warm_up, ep_async_cool_down=args.ep_async_cool_down,
+                              ep_async_mode=args.ep_async_mode,
                               )
     
 

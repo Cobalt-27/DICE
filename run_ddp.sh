@@ -111,6 +111,12 @@ if [ "$ep_score_use_latest" = "y" ]; then
     extra_args+=" --ep-score-use-latest"
 fi
 
+read -p "Enter --ep-async-mode (default shallow): " ep_async_mode
+ep_async_mode=${ep_async_mode:-shallow}
+if [ "$ep_async_mode" != "None" ]; then
+    extra_args+=" --ep-async-mode $ep_async_mode"
+fi
+
 read -p "Use --ep-async-warm-up? (default 0): " ep_async_warm_up
 ep_async_warm_up=${ep_async_warm_up:-0}
 
