@@ -275,7 +275,7 @@ class SparseMoeBlock(nn.Module):
     """
     A mixed expert module containing shared experts.
     """
-    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, para_mode:ParaMode = None):
+    def __init__(self, embed_dim, mlp_ratio=4, num_experts=16, num_experts_per_tok=2, pretraining_tp=2, layer_idx=None, total_layers=None, para_mode:ParaMode = None):
         super().__init__()
         self.num_experts_per_tok = num_experts_per_tok
         self.experts = nn.ModuleList([MoeMLP(hidden_size = embed_dim, intermediate_size = mlp_ratio * embed_dim, pretraining_tp=pretraining_tp) for i in range(num_experts)])
@@ -292,7 +292,8 @@ class SparseMoeBlock(nn.Module):
         if self.n_shared_experts is not None:
             intermediate_size =  embed_dim * self.n_shared_experts
             self.shared_experts = MoeMLP(hidden_size = embed_dim, intermediate_size = intermediate_size, pretraining_tp=pretraining_tp)
-        self.cache_key = layer_idx
+        self.layer_idx = layer_idx
+        self.total_layers = total_layers
         assert para_mode is not None
         self.para_mode = para_mode
         
@@ -320,14 +321,16 @@ class SparseMoeBlock(nn.Module):
                 y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
             else:
                 from expertpara.ep_fwd import moe_infer_ep
+                ep_async_op = self.para_mode.ep_async if self.layer_idx < self.total_layers // 2 else False
+                # print(f"ep_async_op: {ep_async_op} {self.layer_idx} {self.total_layers}")
                 y = moe_infer_ep(
                     inp=hidden_states,
                     experts=self.experts,
                     flat_expert_indices=flat_topk_idx,
                     flat_expert_weights=topk_weight.view(-1, 1),
                     num_experts_per_tok=self.num_experts_per_tok,
-                    async_op=self.para_mode.ep_async,
-                    cache_key=self.cache_key,
+                    async_op=ep_async_op,
+                    cache_key=self.layer_idx,
                 ).view(*orig_shape)
         if self.n_shared_experts is not None:
             with CudaProfiler.scope('moe.mlp_shared'):
@@ -445,7 +448,7 @@ class DiTBlock(nn.Module):
     def __init__(
         self, hidden_size, num_heads, mlp_ratio=4,
         num_experts=8, num_experts_per_tok=2, pretraining_tp=2, 
-        use_flash_attn=False, layer_idx=None, para_mode:ParaMode=None,**block_kwargs
+        use_flash_attn=False, layer_idx=None, total_layers=None, para_mode:ParaMode=None,**block_kwargs
     ):
         super().__init__()
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
@@ -479,6 +482,7 @@ class DiTBlock(nn.Module):
             num_experts_per_tok,
             pretraining_tp,
             layer_idx=layer_idx,
+            total_layers=total_layers,
             para_mode=para_mode,
         )
 
@@ -552,9 +556,6 @@ class DiT(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
-        para_mode_ep_force_sync = para_mode
-        para_mode_ep_force_sync.ep_async = False
-        layer_forced_sync = lambda idx: idx < depth//2
         
         self.blocks = nn.ModuleList(
             [
@@ -567,7 +568,8 @@ class DiT(nn.Module):
                     pretraining_tp,
                     use_flash_attn,
                     layer_idx=i,
-                    para_mode=para_mode if not layer_forced_sync(i) else para_mode_ep_force_sync,
+                    total_layers=depth,
+                    para_mode=para_mode,
                 )
                 for i in range(depth)
             ]
