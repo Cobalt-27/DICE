@@ -123,8 +123,8 @@ sp_async_warm_up=${sp_async_warm_up:-0}
 read -p "Use --ep-async-cool-down? (default 0): " ep_async_cool_down
 ep_async_cool_down=${ep_async_cool_down:-0}
 
-read -p "Use --ep-async-comm-step? (default 1): " ep_async_comm_step
-ep_async_comm_step=${ep_async_comm_step:-1}
+read -p "Use --ep-async-noskip-step? (default 1): " ep_async_noskip_step
+ep_async_noskip_step=${ep_async_noskip_step:-1}
 
 read -p "Enter --ep-async-skip-strategy (default None): " ep_async_skip_strategy
 ep_async_skip_strategy=${ep_async_skip_strategy:-None}
@@ -200,7 +200,7 @@ function save_run_command {
     echo "--strided-sync $strided_sync \\" >> "$output_script"
     echo "--sp-async-warm-up $sp_async_warm_up \\" >> "$output_script"
     echo "--ep-async-cool-down $ep_async_cool_down \\" >> "$output_script"
-    echo "--ep-async-comm-step $ep_async_comm_step \\" >> "$output_script"
+    echo "--ep-async-noskip-step $ep_async_noskip_step \\" >> "$output_script"
     echo "$extra_args" >> "$output_script"
 
     chmod +x "$output_script"
@@ -224,5 +224,5 @@ torchrun --nproc_per_node $world_size sample_ddp.py \
 --strided-sync $strided_sync \
 --sp-async-warm-up $sp_async_warm_up \
 --ep-async-cool-down $ep_async_cool_down \
---ep-async-comm-step $ep_async_comm_step \
+--ep-async-noskip-step $ep_async_noskip_step \
 $extra_args

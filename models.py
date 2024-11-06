@@ -321,7 +321,9 @@ class SparseMoeBlock(nn.Module):
                 y = self.moe_infer(hidden_states, flat_topk_idx, topk_weight.view(-1, 1)).view(*orig_shape)
             else:
                 from expertpara.ep_fwd import moe_infer_ep
-                ep_async_op = self.para_mode.ep_async if self.layer_idx < self.total_layers // 2 else False
+                from expertpara.diep import ep_skip_mask, ep_skip_now, ep_skip_enabled
+                ep_async_op = self.para_mode.ep_async if self.layer_idx < 14 else False
+                partial_skip = ep_skip_enabled()
                 # print(f"ep_async_op: {ep_async_op} {self.layer_idx} {self.total_layers}")
                 y = moe_infer_ep(
                     inp=hidden_states,
@@ -329,6 +331,8 @@ class SparseMoeBlock(nn.Module):
                     flat_expert_indices=flat_topk_idx,
                     flat_expert_weights=topk_weight.view(-1, 1),
                     num_experts_per_tok=self.num_experts_per_tok,
+                    skip_mask=ep_skip_mask(flat_topk_idx.size(0)) if partial_skip else None,
+                    skip_now=ep_skip_now(self.layer_idx) if partial_skip else None,
                     async_op=ep_async_op,
                     cache_key=self.layer_idx,
                 ).view(*orig_shape)

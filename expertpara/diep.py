@@ -68,14 +68,14 @@ def ep_set_step(step):
 def ep_separate_cache():
     return _use_separate_cache
 
-def ep_skip_this_step(idx):
+def ep_skip_now(idx):
     """
-    Decide whether to skip unimportant tokens in this step.
+    Decide whether to skip some tokens in this step.
     """
     if not _enable_skip or not _diep_cache_skip.contains(idx):
         # disabled, or no cache due to first step
         return False
-    return _step % _comm_step != 0
+    return _step % _noskip_interval != 0
 
 _rand_mask = None
 
@@ -103,19 +103,20 @@ def ep_wait():
     _diep_cache_dispatch.wait()
     _diep_cache_combine.wait()
 
+_enable_skip = False
 def ep_skip_enabled():
     return _enable_skip
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, comm_step = 1, skip_mode = None):
+def ep_cache_init(cache_capacity, auto_gc=False, separate_cache =True, noskip_step = 1, skip_mode = None):
     
-    global _comm_step
+    global _noskip_interval
     """
-    perform all2all every comm_step steps, for other steps, skip all2all and mlp via cache_skip
+    perform commu for part of the tokens every _noskip_interval steps
     """
-    _comm_step = comm_step
+    _noskip_interval = noskip_step
     global _enable_skip
-    _enable_skip = comm_step != 1
+    _enable_skip = noskip_step != 1
     """
     skip mode
     high: skip tokens with high router scores
@@ -211,13 +212,13 @@ def ep_cache_clear():
         _diep_cache_combine.clear()
         _diep_cache_skip.clear()
 
-def get_result_to_skip(key):
+def ep_skip_get(key):
     """
     Get the previous result to skip the current step.
     """
     return _diep_cache_skip.get(key)
 
-def put_result_for_skip(key, tensor):
+def ep_skip_put(key, tensor):
     """
     Put the result for the next step to skip the current step.
     """
