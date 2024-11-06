@@ -552,6 +552,10 @@ class DiT(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
+        para_mode_ep_force_sync = para_mode
+        para_mode_ep_force_sync.ep_async = False
+        layer_forced_sync = lambda idx: idx < depth//2
+        
         self.blocks = nn.ModuleList(
             [
                 DiTBlock(
@@ -563,7 +567,7 @@ class DiT(nn.Module):
                     pretraining_tp,
                     use_flash_attn,
                     layer_idx=i,
-                    para_mode=para_mode,
+                    para_mode=para_mode if not layer_forced_sync(i) else para_mode_ep_force_sync,
                 )
                 for i in range(depth)
             ]
