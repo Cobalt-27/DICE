@@ -80,6 +80,11 @@ def run_test(rank, world_size, num_total_experts, num_experts_per_tok, n_tokens,
     prev_out = []
     ep_cache_init(1)
     for i in range(n_iter):
+        from expertpara.diep import diep_force_sync, diep_cancel_sync
+        if i==0:
+            diep_force_sync()
+        elif i==1:
+            diep_cancel_sync()
         inp = torch.randn(n_tokens, hidden_size).to(device)
         flat_expert_indices = torch.randint(0, num_total_experts, (n_tokens * num_experts_per_tok,)).to(device)
         flat_expert_weights = torch.rand(n_tokens * num_experts_per_tok, 1).to(device)

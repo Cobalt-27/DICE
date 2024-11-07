@@ -48,7 +48,7 @@ def test_profiler_with_manual_and_profiler_events(seed):
     manual_time_ABC = manual_start_ABC.elapsed_time(manual_end_ABC)
 
     # Get profiler measured time for AB
-    profiler_time_AB = profiler.elapsed_time('op_AB')
+    profiler_time_AB, _ = profiler.elapsed_time('op_AB')
 
     # Validate the inequalities: A < AB < ABC
     assert manual_time_A < profiler_time_AB, \
@@ -78,8 +78,8 @@ def test_multiple_sections(seed):
     profiler.stop('op_Y')
 
     # Get elapsed times for both operations
-    profiler_time_X = profiler.elapsed_time('op_X')
-    profiler_time_Y = profiler.elapsed_time('op_Y')
+    profiler_time_X, _ = profiler.elapsed_time('op_X')
+    profiler_time_Y, _ = profiler.elapsed_time('op_Y')
 
     # Ensure both timings are greater than zero
     assert profiler_time_X > 0, "Failed: Profiler time for X should be greater than 0"
@@ -109,8 +109,8 @@ def test_overlapping_sections(seed):
     profiler.stop('op_PQ')
 
     # Get elapsed times for both operations
-    profiler_time_P = profiler.elapsed_time('op_P')
-    profiler_time_PQ = profiler.elapsed_time('op_PQ')
+    profiler_time_P, _ = profiler.elapsed_time('op_P')
+    profiler_time_PQ, _ = profiler.elapsed_time('op_PQ')
 
     # Ensure P < PQ, as PQ includes both P and Q
     assert profiler_time_P < profiler_time_PQ, \
@@ -136,7 +136,7 @@ def test_manual_sync(seed):
     profiler.sync()
 
     # Get elapsed time after syncing
-    profiler_time_sync = profiler.elapsed_time('op_sync')
+    profiler_time_sync, _ = profiler.elapsed_time('op_sync')
 
     # Ensure elapsed time is greater than zero
     assert profiler_time_sync > 0, \
@@ -174,7 +174,7 @@ def test_profiler_accuracy(seed):
     manual_time = manual_start.elapsed_time(manual_end)
 
     # Get profiler measured time
-    profiler_time = profiler.elapsed_time('op_accuracy')
+    profiler_time, _ = profiler.elapsed_time('op_accuracy')
 
 
     # Ensure the profiler time is within 5% of the manual time
