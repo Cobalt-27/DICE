@@ -1,7 +1,7 @@
 import torch 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist 
-from expertpara.diep import ep_set_step, ep_async_pipeline_enabled, ep_cache_put_on_miss
+from expertpara.diep import ep_set_step
 from .warmup import ep_forced_sync,sp_require_sync
 
 class RectifiedFlow(torch.nn.Module):
@@ -103,25 +103,12 @@ class RectifiedFlow(torch.nn.Module):
                     assert para_mode is not None and para_mode.ep_async
                     diep_force_sync()
                     ep_cache_clear()
-                if para_mode is not None and para_mode.ep_async and ep_async_pipeline_enabled():
-                    # perform 2 fwd (cond/uncond)
-                    
-                    """
-                    NOTE:
-                    two micro batches are pipelined
-                    have to carefully manage how caches are updated on synced warmup steps
-                    otherwise two microbatches may "pollute" each other's cache
-                    """
-                    ep_cache_put_on_miss(False, True)
-                    vc = self.model(z, t, cond)
-                    ep_cache_put_on_miss(True, False)
-                    vu = self.model(z, t, null_cond)
-                else:
-                    merged_z = torch.cat((z, z), dim=0)
-                    merged_t = torch.cat((t, t), dim=0)
-                    merged_cond = torch.cat((cond, null_cond), dim=0)
-                    v_merged = self.model(merged_z, merged_t, merged_cond)
-                    vc, vu = torch.chunk(v_merged, 2, dim=0)
+
+                merged_z = torch.cat((z, z), dim=0)
+                merged_t = torch.cat((t, t), dim=0)
+                merged_cond = torch.cat((cond, null_cond), dim=0)
+                v_merged = self.model(merged_z, merged_t, merged_cond)
+                vc, vu = torch.chunk(v_merged, 2, dim=0)
                 
                 if diep_forced_sync:
                     diep_cancel_sync()

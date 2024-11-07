@@ -32,7 +32,7 @@ stores all2all combine results, for each layer, used to skip all2all and mlps in
 """
 _diep_cache_skip = None
 
-_CACHE_DISPATCH_VAL_LEN = 7
+_CACHE_DISPATCH_VAL_LEN = 8
 _CACHE_COMBINE_VAL_LEN = 5
 
 max_mem = -1
@@ -97,12 +97,6 @@ _enable_skip = False
 def ep_skip_enabled():
     return _enable_skip
 
-def ep_async_pipeline_enabled():
-    return _async_pipeline
-
-_put_on_dispatch_cache_miss = True
-_put_on_combine_cache_miss = True
-
 _forced_sync = False
 def diep_force_sync():
     global _forced_sync
@@ -113,15 +107,6 @@ def diep_cancel_sync():
     global _forced_sync
     assert _forced_sync
     _forced_sync = False
-
-def ep_cache_put_on_miss(dispatch, combine):
-    """
-    Set whether to update cache when cache does not contain the key.
-    Used to control how consecutive warmup steps update the cache.
-    """
-    global _put_on_dispatch_cache_miss, _put_on_combine_cache_miss
-    _put_on_dispatch_cache_miss = dispatch
-    _put_on_combine_cache_miss = combine
    
 
 def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None, async_pipeline=False):
@@ -189,8 +174,12 @@ def _wait(handles):
         for handle in handles:
             handle.wait()
 
+def _past_layer_key(key):
+    total_layers = _diep_cache_dispatch.capacity
+    return (key - 1) % total_layers
+
 @torch.no_grad()
-def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, cache_key):
+def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts, cache_key):
     """
     Dispatch tokens to experts, async all2all.
     
@@ -209,11 +198,16 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        if _put_on_dispatch_cache_miss:
-            assert not _diep_cache_dispatch.contains(cache_key)
-            _diep_cache_dispatch.put(cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, None))
-        return buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights
-    assert _diep_cache_dispatch.contains(cache_key)
+        assert not _diep_cache_dispatch.contains(cache_key)
+        _diep_cache_dispatch.put(cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts, None))
+        return buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts
+    
+    if _async_pipeline:
+        past_layer_cache_key = _past_layer_key(cache_key)
+        assert _diep_cache_dispatch.contains(past_layer_cache_key)
+        key_to_get = past_layer_cache_key
+    else:
+        key_to_get = cache_key
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     (
         prev_handles, 
@@ -222,8 +216,9 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         prev_token_counts_global,
         prev_grouped_idx_dup,
         prev_flat_expert_weights,
+        prev_experts,
         prev_send_buf
-        ) = _diep_cache_dispatch.get(cache_key)
+        ) = _diep_cache_dispatch.get(key_to_get)
     # if dist.get_rank() == 0:
     #     print(is_vc)
         
@@ -237,14 +232,14 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         token_counts_global=token_counts_global,
         async_op=True,
     )
-    _diep_cache_dispatch.put(cache_key, (handles, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, grouped_dup_inp))
+    _diep_cache_dispatch.put(cache_key, (handles, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts, grouped_dup_inp))
     
     mem_use = ep_cached_tensors_size()
     global max_mem
     if mem_use > max_mem:
         max_mem = mem_use
 
-    return prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights
+    return prev_buf, prev_token_counts_local, prev_token_counts_global, prev_grouped_idx_dup, prev_flat_expert_weights, prev_experts
 
 @torch.no_grad()
 def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, cache_key):
@@ -265,11 +260,16 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        if _put_on_combine_cache_miss:
-            assert not _diep_cache_combine.contains(cache_key)
-            _diep_cache_combine.put(cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
+        assert not _diep_cache_combine.contains(cache_key)
+        _diep_cache_combine.put(cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
         return buf, grouped_idx_dup, flat_expert_weights
-    assert _diep_cache_combine.contains(cache_key)
+
+    if _async_pipeline:
+        past_layer_cache_key = _past_layer_key(cache_key)
+        assert _diep_cache_combine.contains(cache_key)
+        key_to_put = past_layer_cache_key
+    else:
+        key_to_put = cache_key
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     (
         prev_handles,
@@ -288,7 +288,7 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         token_counts_global=token_counts_global,
         async_op=True,
     )
-    _diep_cache_combine.put(cache_key, (handles, buf, grouped_idx_dup, flat_expert_weights, grouped_dup_outp)) # no need to store token counts
+    _diep_cache_combine.put(key_to_put, (handles, buf, grouped_idx_dup, flat_expert_weights, grouped_dup_outp)) # no need to store token counts
     return prev_buf, prev_grouped_idx_dup, prev_flat_expert_weights
 
 def ep_get_max_mem():

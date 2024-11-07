@@ -427,8 +427,6 @@ if __name__ == "__main__":
         assert args.ep_async, "Use latest score is only available when using EP async."
     
     if args.ep_async_pipeline:
-        assert args.model in ["DiT-XL/2", "DiT-G/2"], "Pipeline is currently only available for RF."
         assert args.ep_async, "Pipeline is only available when using EP async."
-        assert not args.sp_async, "Pipeline cannot be used with SP async."
     
     main(args)
