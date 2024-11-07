@@ -187,6 +187,7 @@ def main(args):
             noskip_step = args.ep_async_noskip_step,
             skip_mode= args.ep_async_skip_strategy,
             async_pipeline=args.ep_async_pipeline,
+            selective_async_strategy=args.ep_async_mode,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:

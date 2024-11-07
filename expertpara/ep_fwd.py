@@ -143,6 +143,8 @@ def moe_infer_ep(inp: torch.Tensor, experts: nn.ModuleList, flat_expert_indices,
                                         experts=experts,
                                         cache_key=cache_key)
             # grouped_idx = grouped_idx_dup // num_experts_per_tok # update grouped_idx in case it's used
+    if not async_op:
+        experts_to_calc = experts
     # MLP
     with CudaProfiler.scope('moe.mlp'):
         mlp_outp = proc_experts(inp=mlp_inp, experts=experts_to_calc, token_counts_global=token_counts_global, num_local_experts=num_local_experts)

@@ -109,7 +109,11 @@ def diep_cancel_sync():
     _forced_sync = False
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None, async_pipeline=False):
+def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None, async_pipeline=False, selective_async_strategy=None):
+    
+    assert selective_async_strategy in [None, 'shallow', 'deep', 'interleaved', 'all']
+    global _selective_async_strategy
+    _selective_async_strategy = selective_async_strategy
     
     global _async_pipeline
     _async_pipeline = async_pipeline
@@ -176,7 +180,15 @@ def _wait(handles):
 
 def _past_layer_key(key):
     total_layers = _diep_cache_dispatch.capacity
-    return (key - 1) % total_layers
+    if _selective_async_strategy == 'all':
+        return (key - 1) % total_layers
+    if _selective_async_strategy == 'shallow':
+        return (key - 1) % (total_layers // 2)
+    if _selective_async_strategy == 'deep':
+        return (key - 1) % (total_layers // 2) + total_layers // 2
+    if _selective_async_strategy == 'interleaved':
+        return (key - 2) % total_layers
+    raise ValueError(f"Unknown selective async strategy: {_selective_async_strategy}")
 
 @torch.no_grad()
 def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts, cache_key):
