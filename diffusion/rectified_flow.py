@@ -1,8 +1,7 @@
 import torch 
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist 
-from expertpara.diep import ep_to_vc,ep_to_vu, ep_separate_cache, ep_set_step
-from seqpara.df import sp_to_vc,sp_to_vu
+from expertpara.diep import ep_set_step
 from .warmup import ep_requireSync,sp_requireSync
 
 class RectifiedFlow(torch.nn.Module):
@@ -92,31 +91,26 @@ class RectifiedFlow(torch.nn.Module):
                 if para_mode.sp_async:
                     sp_requireSync(i, sample_steps, para_mode)
             
-            if para_mode.ep and para_mode.ep_async and ep_separate_cache():
-                ep_to_vc()
-            if para_mode.sp and para_mode.sp_async:
-                sp_to_vc()
 
             # ep_cache_clear()
-            vc = self.model(z, t, cond)
-            if self.learn_sigma == True: 
-                vc, _ = vc.chunk(2, dim=1)  
-            
-            if null_cond is not None:
-                if para_mode.ep and para_mode.ep_async and ep_separate_cache():
-                    ep_to_vu()
-                if para_mode.sp and para_mode.sp_async:
-                    sp_to_vu()
-                
+            assert self.learn_sigma
+            if null_cond is not None:        
                 # ep_cache_clear()
 
-                # if dist.get_rank() ==0:
-                #     print("vu_running")
-                vu = self.model(z, t, null_cond) 
+                merged_z = torch.cat((z, z), dim=0)
+                merged_t = torch.cat((t, t), dim=0)
+                merged_cond = torch.cat((cond, null_cond), dim=0)
+                v_merged = self.model(merged_z, merged_t, merged_cond)
+                vc, vu = torch.chunk(v_merged, 2, dim=0)
                 if self.learn_sigma == True: 
+                    vc, _ = vc.chunk(2, dim=1)
                     vu, _ = vu.chunk(2, dim=1) 
                 
                 vc = vu + cfg * (vc - vu)
+            else:
+                vc = self.model(z, t, cond)
+                if self.learn_sigma == True: 
+                    vc, _ = vc.chunk(2, dim=1)  
             x = z - i * dt * vc
             z = z - dt * vc
             # images.append(x)

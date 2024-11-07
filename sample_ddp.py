@@ -120,8 +120,6 @@ def main(args):
         diffusion = create_diffusion(str(args.num_sampling_steps))
     vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
     assert args.cfg_scale >= 1.0, "In almost all cases, cfg_scale be >= 1.0"
-    if args.ep_share_cache:
-        assert rf, "Shared cache is only available when using RectifiedFlow."
     
     using_cfg = args.cfg_scale > 1.0
 
@@ -130,7 +128,7 @@ def main(args):
     folder_name = f"{'' if args.extra_name is None else f'{args.extra_name}--'}{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
-                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-shareCache-{args.ep_share_cache}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"\
+                f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"\
                 f"-noskipStep-{args.ep_async_noskip_step}-skipStrategy-{args.ep_async_skip_strategy}"
                 
     if dist.get_rank() == 0:
@@ -185,13 +183,12 @@ def main(args):
         ep_cache_init(
             cache_capacity=model.depth,
             auto_gc=args.auto_gc,
-            separate_cache=(not args.ep_share_cache) and rf,
             noskip_step = args.ep_async_noskip_step,
             skip_mode= args.ep_async_skip_strategy,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
-        sp_init(sp_use_mngr=not args.sp_legacy_cache, capacity = model.depth, comm_checkpoint = 4, auto_gc = True, separate_cache = rf)
+        sp_init(sp_use_mngr=not args.sp_legacy_cache, capacity = model.depth, comm_checkpoint = 4, auto_gc = True)
     
     
     # prof= ProfileExp("profile_exp",profile_at= 10 if torch.distributed.get_rank()==0 else -100,
@@ -426,7 +423,5 @@ if __name__ == "__main__":
         assert args.sp_async, "Legacy cache is only available when using SP async."
     if args.ep_score_use_latest:
         assert args.ep_async, "Use latest score is only available when using EP async."
-    if args.ep_share_cache:
-        assert args.ep_async, "Shared cache is only available when using EP async."
     
     main(args)
