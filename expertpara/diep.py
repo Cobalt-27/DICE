@@ -96,9 +96,38 @@ def ep_wait():
 _enable_skip = False
 def ep_skip_enabled():
     return _enable_skip
+
+def ep_async_pipeline_enabled():
+    return _async_pipeline
+
+_put_on_dispatch_cache_miss = True
+_put_on_combine_cache_miss = True
+
+_forced_sync = False
+def diep_force_sync():
+    global _forced_sync
+    assert not _forced_sync
+    _forced_sync = True
+
+def diep_cancel_sync():
+    global _forced_sync
+    assert _forced_sync
+    _forced_sync = False
+
+def ep_cache_put_on_miss(dispatch, combine):
+    """
+    Set whether to update cache when cache does not contain the key.
+    Used to control how consecutive warmup steps update the cache.
+    """
+    global _put_on_dispatch_cache_miss, _put_on_combine_cache_miss
+    _put_on_dispatch_cache_miss = dispatch
+    _put_on_combine_cache_miss = combine
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None):
+def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None, async_pipeline=False):
+    
+    global _async_pipeline
+    _async_pipeline = async_pipeline
     
     global _noskip_interval
     """
@@ -169,7 +198,8 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
     """
     from .ep_fwd import global_dispatch
     assert cache_key is not None
-    if not _diep_cache_dispatch.contains(cache_key):
+    # if not _diep_cache_dispatch.contains(cache_key):
+    if _forced_sync:
         # to be warm up
         # if dist.get_rank() == 0:
         #     print("no caches")
@@ -179,8 +209,11 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        _diep_cache_dispatch.put(cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, None))
+        if _put_on_dispatch_cache_miss:
+            assert not _diep_cache_dispatch.contains(cache_key)
+            _diep_cache_dispatch.put(cache_key, (None, buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, None))
         return buf, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights
+    assert _diep_cache_dispatch.contains(cache_key)
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     (
         prev_handles, 
@@ -223,7 +256,8 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
     
     from .ep_fwd import global_combine
     assert cache_key is not None
-    if not _diep_cache_combine.contains(cache_key):
+    # if not _diep_cache_combine.contains(cache_key):
+    if _forced_sync:
         # to be warm up
         buf, _ = global_combine(
             grouped_dup_outp=grouped_dup_outp,
@@ -231,8 +265,11 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
             token_counts_global=token_counts_global,
             async_op=False,
         )
-        _diep_cache_combine.put(cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
+        if _put_on_combine_cache_miss:
+            assert not _diep_cache_combine.contains(cache_key)
+            _diep_cache_combine.put(cache_key, (None, buf, grouped_idx_dup, flat_expert_weights, None))
         return buf, grouped_idx_dup, flat_expert_weights
+    assert _diep_cache_combine.contains(cache_key)
     # reads from cache, wait for the handle, get the results for current step, then start a new async all2all
     (
         prev_handles,

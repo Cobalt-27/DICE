@@ -87,11 +87,11 @@ if [ "$use_auto_gc" = "y" ]; then
     extra_args+=" --auto-gc"
 fi
 
-read -p "Use --ep-share-cache? (y/n, default n): " use_ep_share_cache
-use_ep_share_cache=${use_ep_share_cache:-n}
-if [ "$use_ep_share_cache" = "y" ]; then
-    extra_args+=" --ep-share-cache"
-fi
+# read -p "Use --ep-share-cache? (y/n, default n): " use_ep_share_cache
+# use_ep_share_cache=${use_ep_share_cache:-n}
+# if [ "$use_ep_share_cache" = "y" ]; then
+#     extra_args+=" --ep-share-cache"
+# fi
 
 # read -p "Use --offload? (y/n, default n): " use_offload
 # use_offload=${use_offload:-n}
@@ -111,8 +111,14 @@ if [ "$ep_score_use_latest" = "y" ]; then
     extra_args+=" --ep-score-use-latest"
 fi
 
-read -p "Enter --ep-async-mode (default shallow): " ep_async_mode
-ep_async_mode=${ep_async_mode:-shallow}
+read -p "Use --ep-async-pipeline? (y/n, default n): " use_ep_async_pipeline
+use_ep_async_pipeline=${use_ep_async_pipeline:-n}
+if [ "$use_ep_async_pipeline" = "y" ]; then
+    extra_args+=" --ep-async-pipeline"
+fi
+
+read -p "Enter --ep-async-mode (default all): " ep_async_mode
+ep_async_mode=${ep_async_mode:-all}
 if [ "$ep_async_mode" != "None" ]; then
     extra_args+=" --ep-async-mode $ep_async_mode"
 fi

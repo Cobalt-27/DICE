@@ -128,6 +128,7 @@ def main(args):
     folder_name = f"{'' if args.extra_name is None else f'{args.extra_name}--'}{model_string_name}-bs-{args.per_proc_batch_size}" \
                 f"-seed-{args.global_seed}-mode-{args.para_mode.verbose()}-worldSize-{dist.get_world_size()}-gc-{args.auto_gc}-cfg-{args.cfg_scale}" \
                 f"-epWarmUp-{args.ep_async_warm_up}-strideSync-{args.strided_sync}"\
+                f"-pipeline-{args.ep_async_pipeline}-epMode-{args.ep_async_mode}"\
                 f"-epCoolDown-{args.ep_async_cool_down}-spWarmUp-{args.sp_async_warm_up}-spLegacyCache-{args.sp_legacy_cache}-imgSize-{args.image_size}"\
                 f"-noskipStep-{args.ep_async_noskip_step}-skipStrategy-{args.ep_async_skip_strategy}"
                 
@@ -185,6 +186,7 @@ def main(args):
             auto_gc=args.auto_gc,
             noskip_step = args.ep_async_noskip_step,
             skip_mode= args.ep_async_skip_strategy,
+            async_pipeline=args.ep_async_pipeline,
         )
         use_latest_expert_weights(not args.ep_score_use_latest)
     if args.para_mode.sp and args.para_mode.sp_async:
@@ -378,12 +380,12 @@ if __name__ == "__main__":
     
     parser.add_argument("--auto-gc", action="store_true", help="Automatically garbage collect the cache.")
     
+    parser.add_argument("--ep-async-pipeline", action="store_true", help="pipelined EP async")
     parser.add_argument("--ep-async-mode", type=str, default=None, choices=['shallow', 'deep', 'interleaved', 'all'], help="async EP strategy")
     parser.add_argument("--ep-async-warm-up", type=int, default=0, help="Enable ep async warm-up feature (default: 0)")
     parser.add_argument("--ep-async-cool-down", type=int, default=0, help="Enable ep async cool-down feature (default: 0)")
     parser.add_argument("--strided-sync", type=int, default=0, help="Enable stride sync feature (default: 0)")
     parser.add_argument("--sp-async-warm-up", type=int, default=0, help="Enable sp async warm-up feature (default: 0)")
-    parser.add_argument("--ep-share-cache", action="store_true", help="Shared cache for EP")
     parser.add_argument("--ep-async-noskip-step", type=int, default=1, help="comm stride")
     parser.add_argument("--ep-async-skip-strategy", type=str, default=None, choices=['low', 'high', 'rand'], help="comm strategy")
     
@@ -423,5 +425,10 @@ if __name__ == "__main__":
         assert args.sp_async, "Legacy cache is only available when using SP async."
     if args.ep_score_use_latest:
         assert args.ep_async, "Use latest score is only available when using EP async."
+    
+    if args.ep_async_pipeline:
+        assert args.model in ["DiT-XL/2", "DiT-G/2"], "Pipeline is currently only available for RF."
+        assert args.ep_async, "Pipeline is only available when using EP async."
+        assert not args.sp_async, "Pipeline cannot be used with SP async."
     
     main(args)
