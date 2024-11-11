@@ -145,7 +145,7 @@ class All2AllCache:
         """
         If an async all2all operation is completed, clear the recv buffer.
         """
-        print('gc recv buf')
+        # print('gc recv buf')
         for i in range(self.capacity):
             if self.cache[i] is not None:
                 item = list(self.cache[i])
