@@ -64,14 +64,15 @@ def is_completed(handles):
 
 import torch.distributed as dist
 class All2AllCache:
-    def __init__(self, capacity, val_len, auto_gc, cl_name = None):
+    def __init__(self, capacity, val_len, gc_send_buf, cl_name = None, gc_recv_buf = False):
         """
         capacity: the number of entries in the cache
         auto_gc: automatically clear send buffer after all2all completes
         val_len: the length of the value tuple
         """ 
         self.capacity = capacity
-        self.auto_gc = auto_gc
+        self.gc_send_buf = gc_send_buf
+        self.gc_recv_buf = gc_recv_buf
         self.cache = [None] * capacity
         self.val_len = (
             val_len  # len of the value tuple, useful to avoid missing items in tuple
@@ -106,8 +107,8 @@ class All2AllCache:
             assert value[HANDLES_IDX] is None or isinstance(value[HANDLES_IDX], list)
             assert value[SEND_BUF_IDX] is None or isinstance(value[SEND_BUF_IDX], torch.Tensor)
 
-        if self.auto_gc:
-            self._gc()
+        if self.gc_send_buf:
+            self._gc_send_buf()
         self.cache[key] = value
 
     # @CudaProfiler.prof_func('cache.get')
@@ -118,13 +119,16 @@ class All2AllCache:
         
         assert isinstance(key, int)
         assert isinstance(self.cache[key][RECV_BUF_IDX], torch.Tensor)
-        return self.cache[key]
+        val = self.cache[key]
+        if self.gc_recv_buf:
+            self._gc_recv_buf()
+        return val
 
     def contains(self, key):
         assert isinstance(key, int)
         return self.cache[key] is not None
 
-    def _gc(self):
+    def _gc_send_buf(self):
         """
         If an async all2all operation is completed, clear the send buffer.
         """
@@ -136,7 +140,20 @@ class All2AllCache:
                     item[HANDLES_IDX] = None
                     item[SEND_BUF_IDX] = None  # Clear send buffer
                     self.cache[i] = tuple(item)
-
+    
+    def _gc_recv_buf(self):
+        """
+        If an async all2all operation is completed, clear the recv buffer.
+        """
+        print('gc recv buf')
+        for i in range(self.capacity):
+            if self.cache[i] is not None:
+                item = list(self.cache[i])
+                prev_handles = item[HANDLES_IDX]
+                assert is_completed(prev_handles)
+                item[RECV_BUF_IDX] = None
+                self.cache[i] = tuple(item)
+    
     def tensors_size(self):
         """
         Returns the size of all the tensors in the cache in bytes.

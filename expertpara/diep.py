@@ -140,13 +140,15 @@ def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = No
     global _diep_cache_dispatch, _diep_cache_combine
     _diep_cache_dispatch = All2AllCache(
         capacity=cache_capacity,
-        auto_gc=auto_gc,
+        gc_send_buf=auto_gc,
         val_len=_CACHE_DISPATCH_VAL_LEN,
+        gc_recv_buf=auto_gc and _async_pipeline,
     )
     _diep_cache_combine = All2AllCache(
         capacity=cache_capacity,
-        auto_gc=auto_gc,
+        gc_send_buf=auto_gc,
         val_len=_CACHE_COMBINE_VAL_LEN,
+        gc_recv_buf=False, # combine cache cannot be cleared in pipeline mode
     )
     
     global _diep_cache_skip
