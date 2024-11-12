@@ -141,19 +141,31 @@ class All2AllCache:
                     item[SEND_BUF_IDX] = None  # Clear send buffer
                     self.cache[i] = tuple(item)
     
-    def _gc_recv_buf(self):
-        """
-        If an async all2all operation is completed, clear the recv buffer.
-        """
-        # print('gc recv buf')
+    def manual_gc_recv_buf(self):
+        if not self.gc_recv_buf:
+            return
         for i in range(self.capacity):
             if self.cache[i] is not None:
                 item = list(self.cache[i])
                 prev_handles = item[HANDLES_IDX]
-                assert is_completed(prev_handles)
-                item[RECV_BUF_IDX] = None
-                self.cache[i] = tuple(item)
-    
+                if is_completed(prev_handles):
+                    item[RECV_BUF_IDX] = None
+                    self.cache[i] = tuple(item)
+
+    def _gc_recv_buf(self):
+        assert self.gc_recv_buf
+        """
+        If an async all2all operation is completed, clear the recv buffer.
+        """
+        return 
+        for i in range(self.capacity):
+            if self.cache[i] is not None:
+                item = list(self.cache[i])
+                prev_handles = item[HANDLES_IDX]
+                if is_completed(prev_handles):
+                    item[RECV_BUF_IDX] = None
+                    self.cache[i] = tuple(item)
+                
     def tensors_size(self):
         """
         Returns the size of all the tensors in the cache in bytes.

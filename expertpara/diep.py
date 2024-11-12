@@ -109,7 +109,8 @@ def diep_cancel_sync():
     _forced_sync = False
    
 
-def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, skip_mode = None, async_pipeline=False, selective_async_strategy=None):
+def ep_cache_init(cache_capacity, auto_gc=False, noskip_step = 1, 
+                  skip_mode = None, async_pipeline=False, selective_async_strategy=None):
     
     assert selective_async_strategy in [None, 'shallow', 'deep', 'interleaved', 'all']
     global _selective_async_strategy
@@ -193,7 +194,8 @@ def _past_layer_key(key):
     raise ValueError(f"Unknown selective async strategy: {_selective_async_strategy}")
 
 @torch.no_grad()
-def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, grouped_idx_dup, flat_expert_weights, experts, cache_key):
+def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_global, 
+                          grouped_idx_dup, flat_expert_weights, experts, cache_key):
     """
     Dispatch tokens to experts, async all2all.
     
@@ -238,6 +240,7 @@ def global_dispatch_async(grouped_dup_inp, token_counts_local, token_counts_glob
         
     # CudaProfiler.prof().start('global_dispatch.wait')
     _wait(prev_handles)
+    _diep_cache_dispatch.manual_gc_recv_buf()
     # CudaProfiler.prof().stop('global_dispatch.wait')
     # async all2all, to be received in next step
     buf, handles = global_dispatch(
@@ -294,6 +297,7 @@ def global_combine_async(grouped_dup_outp, token_counts_local, token_counts_glob
         ) = _diep_cache_combine.get(cache_key)
     # CudaProfiler.prof().start('global_combine.wait')
     _wait(prev_handles)
+    # _diep_cache_combine.manual_gc_recv_buf()
     # CudaProfiler.prof().stop('global_combine.wait')
     # async all2all, to be received in next step
     buf, handles = global_combine(
