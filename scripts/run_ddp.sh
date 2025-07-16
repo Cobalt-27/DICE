@@ -1,6 +1,6 @@
 #!/bin/bash
 
-output_script="last_run_ddp_param.sh"
+output_script="./scripts/last_run_ddp_param.sh"
 
 
 
@@ -197,6 +197,10 @@ extra_args+=" --extra-name $extra_name"
 function save_run_command {
     echo "#!/bin/bash" > "$output_script"
     echo "" >> "$output_script"
+    if [ "$cuda_visible_devices" != "all" ]; then
+        echo "export CUDA_VISIBLE_DEVICES=$cuda_visible_devices" >> "$output_script"
+        echo "" >> "$output_script"
+    fi
     echo "torchrun --nproc_per_node $world_size sample_ddp.py \\" >> "$output_script"
     echo "--per-proc-batch-size $per_proc_batch_size \\" >> "$output_script"
     echo "--model $model \\" >> "$output_script"
