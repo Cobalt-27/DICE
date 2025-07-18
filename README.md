@@ -15,6 +15,10 @@ DICE is a framework for **scalable and efficient inference of MoE-based diffusio
 - **Displaced Sequence Parallelism** (DistriFusion)
 
 
+
+## Acknowledgements
+This work would not have been possible without the [DiT-MoE](https://github.com/feizc/DiT-MoE/tree/main) codebase, which served as a critical foundation for our development. We are deeply grateful to its authors for open-sourcing their implementation. Our repository also adapts displaced sequence parallelism components from [xDiT](https://github.com/xdit-project/xDiT) and [DistriFusion](https://github.com/mit-han-lab/distrifuser), and we sincerely thank the authors of these projects for their valuable contributions to the community.
+
 ## Key Features
 - **Interweaved Parallelism**: Halves the reduced staleness compared to displaced expert parallelism.
 - **Selective Synchronization**: Ensures critical layers receive fresh activations while allowing asynchronous execution elsewhere.
@@ -54,9 +58,6 @@ This is an overview of the various parallelism techniques implemented in the pro
 /tests # Unit tests
 ```
 
-
-## Acknowledgements
-This repository builds upon the [DiT-MoE](https://github.com/feizc/DiT-MoE/tree/main) codebase,with displaced sequence parallelism implementations adapted from [xDiT](https://github.com/xdit-project/xDiT) and [DistriFusion](https://github.com/mit-han-lab/distrifuser). We thank the authors of these projects for their foundational work.
 
 ## Usage
 
